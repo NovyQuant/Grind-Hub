@@ -1,5 +1,5 @@
 import { AREAS, Area, EMA_ALPHA, Habit, START_RATING } from './types'
-import { addDays, dateRange, diffDays } from './date'
+import { addDays, dateRange } from './date'
 
 /** Wartość logu nawyku w danym dniu, albo undefined gdy brak wpisu. */
 export type ValueLookup = (habitId: string, date: string) => number | undefined
@@ -10,37 +10,56 @@ function clamp01(x: number): number {
 
 /**
  * Dzienne wykonanie pojedynczego nawyku f ∈ [0,1] dla danej daty.
- * - binary z weekly_target: okno 7 dni (data i 6 dni wstecz).
- * - binary bez weekly_target: 1 gdy zalogowany danego dnia, inaczej 0.
- * - numeric at_most: 1 gdy value <= target, inaczej max(0, 1-(value-target)/target).
- * - numeric at_least: 1 gdy value >= target, inaczej value/target.
- * - brak wpisu (numeric) = 0 (celowa kara za nielogowanie).
+ *
+ * Kadencja 'weekly' (trening, projekt) — liczona z okna 7 dni, więc pojedynczy
+ * dzień przerwy nie karze, dopóki trzymasz tempo tygodnia:
+ *   - check:  sesje(7d) / weekly_target
+ *   - scale3: suma jakości(7d) / weekly_target
+ * Kadencja 'daily':
+ *   - check:  1 gdy zrobione, inaczej 0
+ *   - scale3: wartość 0/0.5/1 (brak wpisu = 0)
+ *   - number range (sen): pasmo [low,high] = 1, poza pasmem spada o falloff/jednostkę
+ *   - number at_most (głupoty): ≤ strefa wolna = 1, dalej spada o 1/falloff
+ *   - number at_least: ≥ target = 1, inaczej value/target
+ *   - brak wpisu (daily) = 0 (kara za nielogowanie)
  */
 export function habitDailyF(habit: Habit, date: string, getValue: ValueLookup): number {
-  if (habit.type === 'binary') {
-    if (habit.weekly_target && habit.weekly_target > 0) {
-      let done = 0
-      for (let i = 0; i < 7; i++) {
-        const v = getValue(habit.id, addDays(date, -i))
-        if (v !== undefined && v >= 1) done++
-      }
-      return clamp01(done >= habit.weekly_target ? 1 : done / habit.weekly_target)
+  if (habit.cadence === 'weekly') {
+    const target = habit.weekly_target && habit.weekly_target > 0 ? habit.weekly_target : 1
+    let acc = 0
+    for (let i = 0; i < 7; i++) {
+      const v = getValue(habit.id, addDays(date, -i))
+      if (v === undefined) continue
+      acc += habit.input_kind === 'check' ? (v >= 1 ? 1 : 0) : v // scale3 sumuje jakość
     }
-    const v = getValue(habit.id, date)
-    return v !== undefined && v >= 1 ? 1 : 0
+    return clamp01(acc / target)
   }
 
-  // numeric
+  // daily
   const v = getValue(habit.id, date)
-  if (v === undefined) return 0
-  const target = habit.daily_target ?? 0
-  if (target <= 0) return v > 0 ? 1 : 0
 
-  if (habit.target_direction === 'at_most') {
-    return v <= target ? 1 : clamp01(1 - (v - target) / target)
+  if (habit.input_kind === 'check') return v !== undefined && v >= 1 ? 1 : 0
+  if (habit.input_kind === 'scale3') return v === undefined ? 0 : clamp01(v)
+
+  // number
+  if (v === undefined) return 0
+  const low = habit.daily_target ?? 0
+  const falloff = habit.falloff ?? 1
+
+  if (habit.score_mode === 'range') {
+    const high = habit.target_high ?? low
+    if (v >= low && v <= high) return 1
+    if (v < low) return clamp01(1 - (low - v) * falloff)
+    return clamp01(1 - (v - high) * falloff)
   }
-  // at_least (domyślnie)
-  return v >= target ? 1 : clamp01(v / target)
+  if (habit.score_mode === 'at_most') {
+    // low = strefa wolna, falloff = zakres na którym spada do 0
+    if (v <= low) return 1
+    return clamp01(1 - (v - low) / (falloff || 1))
+  }
+  // at_least
+  if (low <= 0) return v > 0 ? 1 : 0
+  return v >= low ? 1 : clamp01(v / low)
 }
 
 /** Dzienne wykonanie obszaru: średnia ważona f nawyków (wg weight). null gdy brak nawyków. */
@@ -62,13 +81,24 @@ export function areaDailyF(
   return den > 0 ? num / den : null
 }
 
+/** Dzienny wynik całego dnia: ważona średnia f WSZYSTKICH aktywnych nawyków (0..1). */
+export function dayF(habits: Habit[], date: string, getValue: ValueLookup): number {
+  const active = habits.filter((h) => h.active)
+  if (active.length === 0) return 0
+  let num = 0
+  let den = 0
+  for (const h of active) {
+    const w = h.weight ?? 1
+    num += habitDailyF(h, date, getValue) * w
+    den += w
+  }
+  return den > 0 ? num / den : 0
+}
+
+// ---------- FM Stats (EMA rating 1–20) -------------------------------
+
 export type RatingsByDate = Record<string, Record<Area, number>>
 
-/**
- * Liczy ratingi EMA per obszar dla każdego dnia w [from..to].
- * rating_t = 0.95*rating_{t-1} + 0.05*(20*f).
- * initial: rating na dzień PRZED `from` (rating_{from-1}). Obszar bez nawyków carry-uje rating.
- */
 export function computeRatings(
   habits: Habit[],
   from: string,
@@ -82,11 +112,7 @@ export function computeRatings(
     const day = {} as Record<Area, number>
     for (const area of AREAS) {
       const f = areaDailyF(area, habits, date, getValue)
-      if (f === null) {
-        day[area] = prev[area] // brak nawyków -> bez zmian
-      } else {
-        day[area] = (1 - EMA_ALPHA) * prev[area] + EMA_ALPHA * (20 * f)
-      }
+      day[area] = f === null ? prev[area] : (1 - EMA_ALPHA) * prev[area] + EMA_ALPHA * (20 * f)
     }
     out[date] = day
     prev = day
@@ -94,7 +120,6 @@ export function computeRatings(
   return out
 }
 
-/** Overall = średnia ratingów obszarów (równe wagi). */
 export function overallOf(day: Record<Area, number>): number {
   let sum = 0
   for (const area of AREAS) sum += day[area]
@@ -107,7 +132,6 @@ export function initialRatings(): Record<Area, number> {
   return r
 }
 
-/** Buduje ValueLookup ze zbioru logów. */
 export function makeLookup(logs: { habit_id: string; log_date: string; value: number }[]): ValueLookup {
   const map = new Map<string, number>()
   for (const l of logs) map.set(`${l.habit_id}|${l.log_date}`, l.value)
@@ -126,5 +150,3 @@ export function ratingClass(r: number): string {
   if (r <= 13) return 'text-rating-mid'
   return 'text-rating-good'
 }
-
-export { diffDays }

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import { AttributeSnapshot, Habit, Log, RecordRow } from './types'
+import { Abstinence, AttributeSnapshot, Habit, Log, RecordRow } from './types'
+import { todayISO } from './date'
 
 // ---------- Queries --------------------------------------------------
 
@@ -63,6 +64,7 @@ interface UpsertLogInput {
   habit_id: string
   log_date: string
   value: number
+  tag?: string | null
   note?: string | null
 }
 
@@ -73,7 +75,13 @@ export function useUpsertLog() {
       const { data, error } = await supabase
         .from('logs')
         .upsert(
-          { habit_id: input.habit_id, log_date: input.log_date, value: input.value, note: input.note ?? null },
+          {
+            habit_id: input.habit_id,
+            log_date: input.log_date,
+            value: input.value,
+            tag: input.tag ?? null,
+            note: input.note ?? null,
+          },
           { onConflict: 'habit_id,log_date' }
         )
         .select()
@@ -92,6 +100,7 @@ export function useUpsertLog() {
         habit_id: input.habit_id,
         log_date: input.log_date,
         value: input.value,
+        tag: input.tag ?? null,
         note: input.note ?? null,
       }
       const next = idx >= 0 ? prev.map((l, i) => (i === idx ? optimistic : l)) : [...prev, optimistic]
@@ -172,4 +181,75 @@ export async function saveRecords(rows: RecordRow[]) {
   if (rows.length === 0) return
   const { error } = await supabase.from('records').upsert(rows, { onConflict: 'key' })
   if (error) throw error
+}
+
+// ---------- Nałogi (liczniki czystych dni) ---------------------------
+
+export function useAbstinences() {
+  return useQuery({
+    queryKey: ['abstinences'],
+    queryFn: async (): Promise<Abstinence[]> => {
+      const { data, error } = await supabase
+        .from('abstinences')
+        .select('*')
+        .order('sort_order', { ascending: true })
+      if (error) throw error
+      return (data ?? []) as Abstinence[]
+    },
+  })
+}
+
+export function useAddAbstinence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const { error } = await supabase
+        .from('abstinences')
+        .insert({ name: name.trim(), started_on: todayISO(), best_days: 0 })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['abstinences'] }),
+  })
+}
+
+/** Wpadka: zapisz najlepszą serię, zresetuj licznik na dziś. */
+export function useRelapseAbstinence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (a: Abstinence & { currentDays: number }) => {
+      const best = Math.max(a.best_days, a.currentDays)
+      const { error } = await supabase
+        .from('abstinences')
+        .update({ started_on: todayISO(), best_days: best })
+        .eq('id', a.id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['abstinences'] }),
+  })
+}
+
+/** Ręczna korekta daty startu (np. „czysty już od…"). */
+export function useSetAbstinenceStart() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { id: string; started_on: string }) => {
+      const { error } = await supabase
+        .from('abstinences')
+        .update({ started_on: input.started_on })
+        .eq('id', input.id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['abstinences'] }),
+  })
+}
+
+export function useDeleteAbstinence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('abstinences').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['abstinences'] }),
+  })
 }

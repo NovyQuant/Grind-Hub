@@ -2,10 +2,12 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './lib/auth'
 import { hasSupabaseConfig } from './lib/supabase'
 import { useSync } from './lib/useSync'
+import { useReminder } from './lib/reminder'
 import Login from './screens/Login'
 import Today from './screens/Today'
-import Profile from './screens/Profile'
-import Records from './screens/Records'
+import Levels from './screens/Levels'
+import Stats from './screens/Stats'
+import Addictions from './screens/Addictions'
 import Settings from './screens/Settings'
 
 function ConfigError() {
@@ -14,24 +16,21 @@ function ConfigError() {
       <div className="text-2xl">⚙️</div>
       <h1 className="text-lg font-bold">Brak konfiguracji Supabase</h1>
       <p className="text-sm text-muted">
-        Skopiuj <code className="text-text">.env.example</code> do{' '}
-        <code className="text-text">.env</code> i uzupełnij{' '}
-        <code className="text-text">VITE_SUPABASE_URL</code> oraz{' '}
-        <code className="text-text">VITE_SUPABASE_ANON_KEY</code>, potem zrestartuj{' '}
-        <code className="text-text">npm run dev</code>.
+        Uzupełnij <code className="text-text">VITE_SUPABASE_URL</code> i{' '}
+        <code className="text-text">VITE_SUPABASE_ANON_KEY</code> w <code className="text-text">.env</code>.
       </p>
     </div>
   )
 }
 
 const TABS = [
-  { to: '/', label: 'Dziś', icon: '📋', end: true },
-  { to: '/profil', label: 'Profil', icon: '⚽', end: false },
-  { to: '/rekordy', label: 'Rekordy', icon: '🏆', end: false },
-  { to: '/ustawienia', label: 'Ustawienia', icon: '⚙️', end: false },
+  { to: '/', label: 'Dziś', icon: '🔥', end: true },
+  { to: '/poziomy', label: 'Poziomy', icon: '🎮', end: false },
+  { to: '/stats', label: 'FM Stats', icon: '⚽', end: false },
+  { to: '/nalogi', label: 'Nałogi', icon: '🚭', end: false },
+  { to: '/ustawienia', label: 'Więcej', icon: '⚙️', end: false },
 ]
 
-/** Dolny pasek — tylko mobile (< md). */
 function BottomNav() {
   return (
     <nav className="nav-safe fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur md:hidden">
@@ -42,7 +41,7 @@ function BottomNav() {
             to={t.to}
             end={t.end}
             className={({ isActive }) =>
-              `flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium ${
+              `flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium ${
                 isActive ? 'text-rating-good' : 'text-muted'
               }`
             }
@@ -56,13 +55,12 @@ function BottomNav() {
   )
 }
 
-/** Boczny pasek — tylko desktop (md+). */
 function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-border bg-surface px-4 py-6 md:flex">
       <div className="mb-8 flex items-center gap-2 px-2">
-        <span className="text-2xl">⚽</span>
-        <span className="text-lg font-extrabold tracking-tight">Life Hub</span>
+        <span className="text-2xl">🔥</span>
+        <span className="text-lg font-extrabold tracking-tight">Grind Hub</span>
       </div>
       <nav className="flex flex-col gap-1">
         {TABS.map((t) => (
@@ -72,24 +70,23 @@ function Sidebar() {
             end={t.end}
             className={({ isActive }) =>
               `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-rating-good/10 text-rating-good'
-                  : 'text-muted hover:bg-surface2 hover:text-text'
+                isActive ? 'bg-rating-good/10 text-rating-good' : 'text-muted hover:bg-surface2 hover:text-text'
               }`
             }
           >
             <span className="text-lg leading-none">{t.icon}</span>
-            {t.label}
+            {t.label === 'Więcej' ? 'Ustawienia' : t.label}
           </NavLink>
         ))}
       </nav>
-      <div className="mt-auto px-3 text-xs text-muted">Twój profil zawodnika</div>
+      <div className="mt-auto px-3 text-xs text-muted">Grind never stops.</div>
     </aside>
   )
 }
 
 function AuthedApp() {
   useSync()
+  useReminder()
   return (
     <div className="min-h-full md:pl-60">
       <Sidebar />
@@ -97,8 +94,9 @@ function AuthedApp() {
         <div className="app-scroll md:pb-8">
           <Routes>
             <Route path="/" element={<Today />} />
-            <Route path="/profil" element={<Profile />} />
-            <Route path="/rekordy" element={<Records />} />
+            <Route path="/poziomy" element={<Levels />} />
+            <Route path="/stats" element={<Stats />} />
+            <Route path="/nalogi" element={<Addictions />} />
             <Route path="/ustawienia" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

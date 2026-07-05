@@ -11,14 +11,12 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { useAuth } from '../lib/auth'
 import { useLiveRatings } from '../lib/useLiveRatings'
 import { AREAS, AREA_LABELS, Area } from '../lib/types'
 import { ratingClass, ratingColor } from '../lib/ratings'
 
-export default function Profile() {
+export default function Stats() {
   const live = useLiveRatings(90)
-  const { signOut } = useAuth()
 
   if (live.loading) return <div className="p-6 text-muted">Ładowanie…</div>
 
@@ -26,40 +24,29 @@ export default function Profile() {
     area: AREA_LABELS[a],
     rating: Math.round(live.current[a] * 10) / 10,
   }))
-
   const lineData = live.overallSeries.map((p) => ({
-    date: p.date.slice(5), // MM-DD
+    date: p.date.slice(5),
     overall: Math.round(p.overall * 10) / 10,
   }))
 
   return (
     <div className="p-4 md:p-6">
-      <header className="mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-extrabold tracking-tight">Profil zawodnika</h1>
-          <p className="text-sm text-muted">
-            Overall{' '}
-            <span className={`font-bold ${ratingClass(live.overall)}`}>
-              {live.overall.toFixed(1)}
-            </span>
-          </p>
-        </div>
-        <button
-          onClick={() => signOut()}
-          className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted"
-        >
-          Wyloguj
-        </button>
+      <header className="mb-4">
+        <h1 className="text-2xl font-extrabold tracking-tight">FM Stats ⚽</h1>
+        <p className="text-sm text-muted">
+          Overall{' '}
+          <span className={`font-bold ${ratingClass(live.overall)}`}>{live.overall.toFixed(1)}</span>{' '}
+          <span className="text-muted">— powolna forma (EMA 1–20), dodatek do streaka.</span>
+        </p>
       </header>
 
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        {/* Radar */}
         <div className="rounded-2xl border border-border bg-surface p-3">
           <div className="h-64 lg:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={radarData} outerRadius="72%">
                 <PolarGrid stroke="#243040" />
-                <PolarAngleAxis dataKey="area" tick={{ fill: '#e6edf5', fontSize: 12 }} />
+                <PolarAngleAxis dataKey="area" tick={{ fill: '#e6edf5', fontSize: 11 }} />
                 <PolarRadiusAxis domain={[0, 20]} tick={{ fill: '#7c8ba1', fontSize: 9 }} axisLine={false} />
                 <Radar dataKey="rating" stroke="#30c85e" fill="#30c85e" fillOpacity={0.35} />
               </RadarChart>
@@ -67,7 +54,6 @@ export default function Profile() {
           </div>
         </div>
 
-        {/* Lista atrybutów z trendem */}
         <div className="self-start overflow-hidden rounded-2xl border border-border bg-surface">
           {AREAS.map((a, i) => (
             <AttrRow key={a} area={a} rating={live.current[a]} prev={live.weekAgo[a]} first={i === 0} />
@@ -75,7 +61,6 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* Overall 90 dni */}
       <div className="rounded-2xl border border-border bg-surface p-3">
         <div className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">
           Overall — ostatnie 90 dni
@@ -113,12 +98,10 @@ function AttrRow({
   const up = delta > 0.05
   const down = delta < -0.05
   return (
-    <div
-      className={`flex items-center justify-between px-4 py-3 ${first ? '' : 'border-t border-border'}`}
-    >
+    <div className={`flex items-center justify-between px-4 py-3 ${first ? '' : 'border-t border-border'}`}>
       <span className="font-medium">{AREA_LABELS[area]}</span>
       <div className="flex items-center gap-3">
-        <span className="text-xs text-muted">
+        <span className="text-xs">
           {up ? (
             <span className="text-rating-good">↑ {delta.toFixed(1)}</span>
           ) : down ? (

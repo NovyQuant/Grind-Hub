@@ -1,84 +1,94 @@
 -- =====================================================================
--- Life Hub — schema for Supabase (Postgres)
+-- Grind Hub — schema v2 (streak + poziomy)
 -- Wklej całość w Supabase → SQL Editor → Run.
--- Single-user MVP: RLS przepuszcza tylko zalogowanego użytkownika.
+-- UWAGA: to CZYŚCI stare tabele (nowy model danych). Single-user MVP.
 -- =====================================================================
+
+-- ---------- Reset (nowy model) ---------------------------------------
+drop table if exists logs cascade;
+drop table if exists attribute_snapshots cascade;
+drop table if exists records cascade;
+drop table if exists abstinences cascade;
+drop table if exists habits cascade;
 
 -- ---------- Tabele ----------------------------------------------------
 
--- obszary życia: 'sen', 'silownia', 'dieta', 'finanse', 'rozwoj'
+-- obszary: 'sen','silownia','dieta','finanse','kosmetyki','rozwoj'
 
-create table if not exists habits (
+create table habits (
   id uuid primary key default gen_random_uuid(),
-  name text not null,                -- np. "Trening siłowy", "Kcal", "Sen (h)"
-  area text not null,                -- jeden z obszarów wyżej
-  type text not null,                -- 'binary' | 'numeric'
-  unit text,                         -- np. 'kcal', 'h', 'zł' (dla numeric)
-  target_direction text,             -- 'at_least' | 'at_most' (dla numeric)
-  daily_target numeric,              -- np. kcal <= 2400, sen >= 7
-  weekly_target int,                 -- dla binary: np. 3 treningi/tydz
-  weight numeric default 1,          -- waga w ratingu obszaru
+  name text not null,
+  area text not null,
+  input_kind text not null,          -- 'check' | 'scale3' | 'number'
+  cadence text not null default 'daily', -- 'daily' | 'weekly'
+  score_mode text,                   -- (number) 'at_least' | 'at_most' | 'range'
+  daily_target numeric,              -- próg / dolna granica pasma / strefa wolna
+  target_high numeric,               -- (range) górna granica pasma
+  falloff numeric,                   -- spadek f na jednostkę poza celem
+  weekly_target numeric,             -- (weekly) sesje/tydz albo pkt jakości/tydz
+  subtypes text,                     -- np. 'siłownia,basen' (dla check)
+  weight numeric default 1,
   active boolean default true,
   sort_order int default 0
 );
 
-create table if not exists logs (
+create table logs (
   id uuid primary key default gen_random_uuid(),
   habit_id uuid references habits(id) on delete cascade,
   log_date date not null,
-  value numeric not null,            -- binary: 1; numeric: wpisana wartość
+  value numeric not null,            -- check:1; scale3:0/0.5/1; number: wartość
+  tag text,                          -- podtyp, np. 'siłownia' / 'basen'
   note text,
   unique (habit_id, log_date)
 );
 
-create table if not exists attribute_snapshots (
+create table attribute_snapshots (
   snap_date date not null,
   area text not null,
-  rating numeric not null,           -- 1.0–20.0
+  rating numeric not null,           -- 1.0–20.0 (FM stats, EMA)
   primary key (snap_date, area)
 );
 
-create table if not exists records (
-  key text primary key,              -- np. 'streak_silownia', 'best_week_overall'
+create table records (
+  key text primary key,
   label text not null,
   value numeric not null,
   achieved_at date not null
+);
+
+-- Nałogi: liczniki czystych dni
+create table abstinences (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,                -- np. 'Snus'
+  started_on date not null,          -- data ostatniego resetu (czyste od…)
+  best_days int default 0,           -- najdłuższa czysta seria all-time
+  sort_order int default 0,
+  created_at timestamptz default now()
 );
 
 create index if not exists logs_date_idx on logs (log_date);
 create index if not exists snapshots_area_idx on attribute_snapshots (area, snap_date);
 
 -- ---------- Row Level Security ---------------------------------------
--- Single-user: każdy zalogowany (authenticated) ma pełen dostęp.
--- anon nie ma dostępu do niczego.
-
 alter table habits enable row level security;
 alter table logs enable row level security;
 alter table attribute_snapshots enable row level security;
 alter table records enable row level security;
+alter table abstinences enable row level security;
 
-drop policy if exists "auth full habits" on habits;
-drop policy if exists "auth full logs" on logs;
-drop policy if exists "auth full snapshots" on attribute_snapshots;
-drop policy if exists "auth full records" on records;
+create policy "auth full habits" on habits for all to authenticated using (true) with check (true);
+create policy "auth full logs" on logs for all to authenticated using (true) with check (true);
+create policy "auth full snapshots" on attribute_snapshots for all to authenticated using (true) with check (true);
+create policy "auth full records" on records for all to authenticated using (true) with check (true);
+create policy "auth full abstinences" on abstinences for all to authenticated using (true) with check (true);
 
-create policy "auth full habits" on habits
-  for all to authenticated using (true) with check (true);
-create policy "auth full logs" on logs
-  for all to authenticated using (true) with check (true);
-create policy "auth full snapshots" on attribute_snapshots
-  for all to authenticated using (true) with check (true);
-create policy "auth full records" on records
-  for all to authenticated using (true) with check (true);
-
--- ---------- Seed (tylko jeśli tabela habits pusta) -------------------
-
-insert into habits (name, area, type, unit, target_direction, daily_target, weekly_target, weight, sort_order)
-select * from (values
-  ('Sen (h)',                 'sen',      'numeric', 'h',    'at_least', 7,    null, 1, 1),
-  ('Trening siłowy',          'silownia', 'binary',  null,   null,       null, 3,    1, 2),
-  ('Kcal',                    'dieta',    'numeric', 'kcal', 'at_most',  2400, null, 1, 3),
-  ('Wydatki dnia (zł)',       'finanse',  'numeric', 'zł',   'at_most',  70,   null, 1, 4),
-  ('Praca nad projektem (h)', 'rozwoj',   'numeric', 'h',    'at_least', 1,    null, 1, 5)
-) as v(name, area, type, unit, target_direction, daily_target, weekly_target, weight, sort_order)
-where not exists (select 1 from habits);
+-- ---------- Seed nawyków ---------------------------------------------
+insert into habits
+  (name, area, input_kind, cadence, score_mode, daily_target, target_high, falloff, weekly_target, subtypes, weight, sort_order)
+values
+  ('Sen',        'sen',       'number', 'daily',  'range',   7,    8,    0.5,  null, null,             2,   1),
+  ('Trening',    'silownia',  'check',  'weekly', null,      null, null, null, 3,    'siłownia,basen', 2,   2),
+  ('Projekt',    'rozwoj',    'scale3', 'weekly', null,      null, null, null, 2,    null,             2,   3),
+  ('Dieta',      'dieta',     'scale3', 'daily',  null,      null, null, null, null, null,             1,   4),
+  ('Głupoty (zł)','finanse',  'number', 'daily',  'at_most', 50,   null, 250,  null, null,             0.5, 5),
+  ('Kosmetyki',  'kosmetyki', 'check',  'daily',  null,      null, null, null, null, null,             0.5, 6);
