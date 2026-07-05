@@ -1,0 +1,175 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { supabase } from './supabase'
+import { AttributeSnapshot, Habit, Log, RecordRow } from './types'
+
+// ---------- Queries --------------------------------------------------
+
+export function useHabits() {
+  return useQuery({
+    queryKey: ['habits'],
+    queryFn: async (): Promise<Habit[]> => {
+      const { data, error } = await supabase
+        .from('habits')
+        .select('*')
+        .order('sort_order', { ascending: true })
+      if (error) throw error
+      return (data ?? []) as Habit[]
+    },
+  })
+}
+
+export function useLogs() {
+  return useQuery({
+    queryKey: ['logs'],
+    queryFn: async (): Promise<Log[]> => {
+      const { data, error } = await supabase
+        .from('logs')
+        .select('*')
+        .order('log_date', { ascending: true })
+      if (error) throw error
+      return (data ?? []) as Log[]
+    },
+  })
+}
+
+export function useSnapshots() {
+  return useQuery({
+    queryKey: ['snapshots'],
+    queryFn: async (): Promise<AttributeSnapshot[]> => {
+      const { data, error } = await supabase
+        .from('attribute_snapshots')
+        .select('*')
+        .order('snap_date', { ascending: true })
+      if (error) throw error
+      return (data ?? []) as AttributeSnapshot[]
+    },
+  })
+}
+
+export function useRecords() {
+  return useQuery({
+    queryKey: ['records'],
+    queryFn: async (): Promise<RecordRow[]> => {
+      const { data, error } = await supabase.from('records').select('*')
+      if (error) throw error
+      return (data ?? []) as RecordRow[]
+    },
+  })
+}
+
+// ---------- Mutacje: logi (optimistic) -------------------------------
+
+interface UpsertLogInput {
+  habit_id: string
+  log_date: string
+  value: number
+  note?: string | null
+}
+
+export function useUpsertLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: UpsertLogInput) => {
+      const { data, error } = await supabase
+        .from('logs')
+        .upsert(
+          { habit_id: input.habit_id, log_date: input.log_date, value: input.value, note: input.note ?? null },
+          { onConflict: 'habit_id,log_date' }
+        )
+        .select()
+        .single()
+      if (error) throw error
+      return data as Log
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['logs'] })
+      const prev = qc.getQueryData<Log[]>(['logs']) ?? []
+      const idx = prev.findIndex(
+        (l) => l.habit_id === input.habit_id && l.log_date === input.log_date
+      )
+      const optimistic: Log = {
+        id: idx >= 0 ? prev[idx].id : `tmp-${Date.now()}`,
+        habit_id: input.habit_id,
+        log_date: input.log_date,
+        value: input.value,
+        note: input.note ?? null,
+      }
+      const next = idx >= 0 ? prev.map((l, i) => (i === idx ? optimistic : l)) : [...prev, optimistic]
+      qc.setQueryData<Log[]>(['logs'], next)
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['logs'], ctx.prev)
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['logs'] })
+    },
+  })
+}
+
+export function useDeleteLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { habit_id: string; log_date: string }) => {
+      const { error } = await supabase
+        .from('logs')
+        .delete()
+        .eq('habit_id', input.habit_id)
+        .eq('log_date', input.log_date)
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['logs'] })
+      const prev = qc.getQueryData<Log[]>(['logs']) ?? []
+      qc.setQueryData<Log[]>(
+        ['logs'],
+        prev.filter((l) => !(l.habit_id === input.habit_id && l.log_date === input.log_date))
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['logs'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['logs'] }),
+  })
+}
+
+// ---------- Mutacje: nawyki (CRUD) -----------------------------------
+
+export function useSaveHabit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (h: Partial<Habit> & { id?: string }) => {
+      if (h.id) {
+        const { error } = await supabase.from('habits').update(h).eq('id', h.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('habits').insert(h)
+        if (error) throw error
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['habits'] }),
+  })
+}
+
+export function useDeleteHabit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('habits').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['habits'] })
+      qc.invalidateQueries({ queryKey: ['logs'] })
+    },
+  })
+}
+
+// ---------- Zapis rekordów -------------------------------------------
+
+export async function saveRecords(rows: RecordRow[]) {
+  if (rows.length === 0) return
+  const { error } = await supabase.from('records').upsert(rows, { onConflict: 'key' })
+  if (error) throw error
+}
