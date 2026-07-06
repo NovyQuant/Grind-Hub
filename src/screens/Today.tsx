@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useHabits, useLogs, useUpsertLog, useDeleteLog } from '../lib/queries'
-import { Habit, Log, SCALE3, AREA_ICONS, Area, MILESTONES } from '../lib/types'
+import { Habit, Log, SCALE3, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
 import { todayISO } from '../lib/date'
-import { computeProgress, nextMilestone } from '../lib/progress'
+import { computeProgress } from '../lib/progress'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 
 /** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania). */
@@ -34,10 +34,6 @@ export default function Today() {
   if (habits.isLoading || logs.isLoading)
     return <div className="p-6 text-muted">Ładowanie…</div>
 
-  const mNext = nextMilestone(progress.streakCurrent, MILESTONES)
-  const mPrev = [...MILESTONES].reverse().find((m) => m <= progress.streakCurrent) ?? 0
-  const mPct = mNext ? ((progress.streakCurrent - mPrev) / (mNext - mPrev)) * 100 : 100
-
   function closeDay() {
     for (const h of active) {
       const has = logsList.some((l) => l.habit_id === h.id && l.log_date === date)
@@ -50,46 +46,40 @@ export default function Today() {
 
   return (
     <div className="p-4 md:p-6">
-      {/* Streak hero */}
-      <div className="mb-4 overflow-hidden rounded-3xl border border-border bg-gradient-to-b from-surface2 to-surface p-5 text-center">
-        <div className="text-xs uppercase tracking-widest text-muted">Streak</div>
-        <div className="mt-1 flex items-center justify-center gap-2">
-          <span className="text-5xl leading-none">🔥</span>
-          <span className="text-6xl font-black tabular-nums">{progress.streakCurrent}</span>
-        </div>
-        <div className="mt-1 text-sm text-muted">
-          {progress.streakCurrent === 0
-            ? 'Zacznij dziś. Zamknij dzień na ≥80%.'
-            : progress.todayDone
-              ? 'Dzień zaliczony ✅ Nie przerywaj.'
-              : 'Dziś jeszcze niezaliczone — dokończ!'}
-        </div>
-
-        {mNext && (
-          <div className="mx-auto mt-4 max-w-xs">
-            <div className="mb-1 flex justify-between text-[11px] text-muted">
-              <span>{mPrev} dni</span>
-              <span>🏆 {mNext} dni</span>
+      {/* Streaki per obszar */}
+      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3">
+        {AREAS.map((area) => {
+          const s = progress.streaks[area]
+          const done = s.periodDone
+          return (
+            <div
+              key={area}
+              className={`rounded-2xl border p-3 ${
+                done ? 'border-rating-good/60 bg-rating-good/10' : 'border-border bg-surface'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 text-xs text-muted">
+                <span className="text-base">{AREA_ICONS[area]}</span>
+                <span className="font-semibold">{AREA_LABELS[area]}</span>
+              </div>
+              <div className="mt-1 text-2xl font-black tabular-nums">
+                🔥 {s.current}
+                <span className="ml-1 text-xs font-medium text-muted">
+                  {s.unit === 'week' ? 'tyg' : 'dni'}
+                </span>
+              </div>
+              <div className={`mt-0.5 text-[11px] ${done ? 'text-rating-good' : 'text-muted'}`}>
+                {s.unit === 'week'
+                  ? done
+                    ? '✓ tydzień zaliczony'
+                    : `${s.weekAcc}/${s.weekTarget} w tym tygodniu`
+                  : done
+                    ? '✓ dziś zaliczone'
+                    : 'dziś jeszcze nie'}
+              </div>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-surface">
-              <div
-                className="h-full bg-gradient-to-r from-rating-mid to-rating-good transition-all"
-                style={{ width: `${mPct}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        <div className="mt-4 flex justify-center gap-6 text-sm">
-          <div>
-            <div className="font-bold">{progress.dayScoreToday}%</div>
-            <div className="text-[11px] text-muted">wynik dnia</div>
-          </div>
-          <div>
-            <div className="font-bold">{progress.streakBest}</div>
-            <div className="text-[11px] text-muted">rekord</div>
-          </div>
-        </div>
+          )
+        })}
       </div>
 
       {/* Date picker (kompaktowy) */}

@@ -81,20 +81,6 @@ export function areaDailyF(
   return den > 0 ? num / den : null
 }
 
-/** Dzienny wynik całego dnia: ważona średnia f WSZYSTKICH aktywnych nawyków (0..1). */
-export function dayF(habits: Habit[], date: string, getValue: ValueLookup): number {
-  const active = habits.filter((h) => h.active)
-  if (active.length === 0) return 0
-  let num = 0
-  let den = 0
-  for (const h of active) {
-    const w = h.weight ?? 1
-    num += habitDailyF(h, date, getValue) * w
-    den += w
-  }
-  return den > 0 ? num / den : 0
-}
-
 // ---------- FM Stats (EMA rating 1–20) -------------------------------
 
 export type RatingsByDate = Record<string, Record<Area, number>>

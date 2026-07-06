@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useHabits, useLogs } from '../lib/queries'
 import { computeProgress } from '../lib/progress'
-import { AREAS, AREA_ICONS, AREA_LABELS, MILESTONES } from '../lib/types'
+import { AREAS, AREA_ICONS, AREA_LABELS } from '../lib/types'
 
 export default function Levels() {
   const habits = useHabits()
@@ -19,30 +19,19 @@ export default function Levels() {
     <div className="p-4 md:p-6">
       <h1 className="mb-4 text-2xl font-extrabold tracking-tight">Poziomy 🎮</h1>
 
-      {/* Streak + milestones */}
+      {/* Streaki per obszar */}
       <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-muted">Streak</div>
-            <div className="text-3xl font-black">
-              🔥 {p.streakCurrent}
-              <span className="ml-2 text-sm font-medium text-muted">rekord {p.streakBest}</span>
-            </div>
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {MILESTONES.map((m) => {
-            const got = p.streakBest >= m
+        <div className="mb-2 text-xs uppercase tracking-wide text-muted">Streaki</div>
+        <div className="flex flex-col gap-2">
+          {AREAS.map((area) => {
+            const s = p.streaks[area]
             return (
-              <div
-                key={m}
-                className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold ${
-                  got
-                    ? 'border-rating-good/60 bg-rating-good/10 text-rating-good'
-                    : 'border-border text-muted opacity-60'
-                }`}
-              >
-                {got ? '🏆' : '🔒'} {m} dni
+              <div key={area} className="flex items-center gap-2 text-sm">
+                <span className="w-6 text-center">{AREA_ICONS[area]}</span>
+                <span className="flex-1 font-medium">{AREA_LABELS[area]}</span>
+                <span className="font-black tabular-nums">🔥 {s.current}</span>
+                <span className="w-7 text-[11px] text-muted">{s.unit === 'week' ? 'tyg' : 'dni'}</span>
+                <span className="w-16 text-right text-[11px] text-muted">rekord {s.best}</span>
               </div>
             )
           })}
@@ -92,16 +81,6 @@ export default function Levels() {
       {/* Tydzień */}
       <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Ostatnie 7 dni</h2>
       <div className="rounded-2xl border border-border bg-surface p-4">
-        <div className="mb-3 flex gap-6">
-          <div>
-            <div className="text-2xl font-extrabold">{p.week.daysCompleted}/7</div>
-            <div className="text-[11px] text-muted">dni zaliczone</div>
-          </div>
-          <div>
-            <div className="text-2xl font-extrabold">{p.week.avgScore}%</div>
-            <div className="text-[11px] text-muted">średni wynik</div>
-          </div>
-        </div>
         <div className="flex flex-col gap-1.5">
           {AREAS.map((area) => (
             <div key={area} className="flex items-center gap-2">

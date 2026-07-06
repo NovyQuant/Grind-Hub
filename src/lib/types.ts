@@ -118,12 +118,14 @@ export const SCALE3 = [
   { value: 1, label: 'super', short: '🔥' },
 ] as const
 
-// Streak / poziomy
-export const DAY_COMPLETE_THRESHOLD = 0.8 // dzień zaliczony gdy ważona średnia f >= 0.8
+// Streak / poziomy — streaki liczone PER OBSZAR (bez globalnego podsumowania).
+// Obszary dzienne (sen, dieta, finanse, kosmetyki): dzień zaliczony gdy f >= 0.8.
+// Obszary tygodniowe (trening, projekt): tydzień kalendarzowy pon–ndz zaliczony gdy cel zrobiony.
 export const AREA_GOOD_THRESHOLD = 0.8 // dobry dzień w obszarze
 export const AREA_BAD_THRESHOLD = 0.5 // dzień "poza targetem" gdy f < 0.5
 export const LEVEL_DECAY_BAD_DAYS = 7 // tyle słabych dni obniża poziom o 1
-export const MILESTONES = [7, 30, 100, 250, 365]
+export const DAY_MILESTONES = [7, 30, 100, 250, 365]
+export const WEEK_MILESTONES = [4, 8, 12, 26, 52]
 
 // FM stats (EMA)
 export const START_RATING = 8.0

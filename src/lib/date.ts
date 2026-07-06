@@ -28,6 +28,12 @@ export function diffDays(a: string, b: string): number {
   return Math.round(ms / 86400000)
 }
 
+/** Poniedziałek tygodnia zawierającego datę (tydzień kalendarzowy pon–ndz). */
+export function weekStartISO(s: string): string {
+  const dow = (parseISO(s).getDay() + 6) % 7 // pon = 0
+  return addDays(s, -dow)
+}
+
 /** Lista dat [from..to] włącznie. */
 export function dateRange(from: string, to: string): string[] {
   const out: string[] = []
