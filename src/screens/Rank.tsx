@@ -62,11 +62,15 @@ export default function Rank() {
 
         <div className="mt-4 flex justify-center gap-6 text-sm">
           <div>
-            <div className="font-bold text-rating-good">+{r.todayXP} XP</div>
+            <div className={`font-bold ${r.todayXP < 0 ? 'text-rating-bad' : 'text-rating-good'}`}>
+              {r.todayXP >= 0 ? '+' : ''}{r.todayXP} XP
+            </div>
             <div className="text-[11px] text-muted">dziś</div>
           </div>
           <div>
-            <div className="font-bold">+{r.weekXP} XP</div>
+            <div className={`font-bold ${r.weekXP < 0 ? 'text-rating-bad' : ''}`}>
+              {r.weekXP >= 0 ? '+' : ''}{r.weekXP} XP
+            </div>
             <div className="text-[11px] text-muted">w tym tygodniu</div>
           </div>
         </div>
@@ -78,24 +82,32 @@ export default function Rank() {
         <div className="flex flex-col gap-2">
           {AREAS.map((area) => {
             const { xp, max } = r.perAreaToday[area]
-            const w = max > 0 ? (xp / max) * 100 : 0
+            const w = max > 0 ? (Math.abs(xp) / max) * 100 : 0
             return (
               <div key={area} className="flex items-center gap-2">
                 <span className="w-6 text-center">{AREA_ICONS[area]}</span>
                 <span className="w-20 text-xs font-medium">{AREA_LABELS[area]}</span>
                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface2">
-                  <div className="h-full bg-rating-good" style={{ width: `${w}%` }} />
+                  <div
+                    className={`h-full ${xp < 0 ? 'bg-rating-bad' : 'bg-rating-good'}`}
+                    style={{ width: `${w}%` }}
+                  />
                 </div>
-                <span className="w-16 text-right text-[11px] tabular-nums text-muted">
-                  +{xp}/{max}
+                <span
+                  className={`w-16 text-right text-[11px] tabular-nums ${
+                    xp < 0 ? 'text-rating-bad' : xp > 0 ? 'text-rating-good' : 'text-muted'
+                  }`}
+                >
+                  {xp >= 0 ? '+' : ''}{xp}/{max}
                 </span>
               </div>
             )
           })}
         </div>
         <p className="mt-3 text-[11px] text-muted">
-          XP = wykonanie × waga obszaru. Trening i projekt liczą się z okna tygodnia, więc
-          punkty lecą codziennie, dopóki trzymasz tempo.
+          Super = +XP, okej = 0, słabo = −XP (wg wagi obszaru). Sen: 7–8h = +XP, 6:30–7 i
+          8–8:30 = 0, poza = −XP. Trening i projekt liczą się z okna tygodnia — trzymaj tempo,
+          a punkty lecą codziennie.
         </p>
       </div>
 

@@ -3,9 +3,10 @@ import { dateRange, todayISO, weekStartISO } from './date'
 import { habitDailyF, makeLookup, ValueLookup } from './ratings'
 
 // ---------- System rang (à la League of Legends) ----------------------
-// Każdy dzień daje XP: f nawyku × waga × XP_PER_WEIGHT (suma wag 8 → max 200/dzień).
-// XP tylko rośnie — słaby dzień to mały przyrost, nie kara. Rangi liczone
-// deterministycznie z logów (bez stanu w DB).
+// XP w trzech strefach: super = +waga×25, okej = 0, słabo = −waga×25.
+// Suma wag 8 → dzień od −200 do +200 XP. Możliwy spadek rangi.
+// Dziś w toku: brak wpisu = 0 (neutralne), kara −XP dopiero za zamknięte dni.
+// Rangi liczone deterministycznie z logów (bez stanu w DB).
 
 export const XP_PER_WEIGHT = 25
 
@@ -48,12 +49,61 @@ export interface RankState {
   perAreaToday: Record<Area, { xp: number; max: number }>
 }
 
-/** XP za jeden dzień: suma f × waga × XP_PER_WEIGHT po aktywnych nawykach. */
-export function dayXP(habits: Habit[], date: string, getValue: ValueLookup): number {
+/**
+ * Znak XP nawyku danego dnia: +1 super / 0 okej / −1 słabo.
+ * `pending` = dzień w toku (dziś): brak wpisu daje 0 zamiast −1.
+ *
+ * - weekly (trening, projekt): f z okna 7 dni — cel trafiony (f≥1) = +1,
+ *   połowa tempa (f≥0.5) = 0, poniżej = −1
+ * - check: zrobione = +1, brak = −1
+ * - scale3: super = +1, okej = 0, słabo/brak = −1
+ * - number range (sen, falloff 0.5/h): pasmo 7–8h (f=1) = +1,
+ *   6:30–7 i 8–8:30 (f≥0.75) = 0, poza (f<0.75) = −1
+ * - number at_most (głupoty): strefa wolna (f=1) = +1, lekko ponad (f≥0.67) = 0, dalej = −1
+ * - number at_least: cel (f≥1) = +1, ≥połowa = 0, poniżej = −1
+ */
+export function habitXPSign(
+  habit: Habit,
+  date: string,
+  getValue: ValueLookup,
+  pending: boolean
+): number {
+  if (habit.cadence === 'weekly') {
+    const f = habitDailyF(habit, date, getValue)
+    if (f >= 1) return 1
+    if (f >= 0.5) return 0
+    return -1
+  }
+
+  const v = getValue(habit.id, date)
+  if (v === undefined) return pending ? 0 : -1
+
+  if (habit.input_kind === 'check') return v >= 1 ? 1 : -1
+  if (habit.input_kind === 'scale3') {
+    if (v >= 1) return 1
+    if (v >= 0.5) return 0
+    return -1
+  }
+
+  // number
+  const f = habitDailyF(habit, date, getValue)
+  if (f >= 1) return 1
+  const neutral = habit.score_mode === 'range' ? 0.75 : habit.score_mode === 'at_most' ? 0.67 : 0.5
+  if (f >= neutral) return 0
+  return -1
+}
+
+/** XP za jeden dzień: suma znak × waga × XP_PER_WEIGHT po aktywnych nawykach. */
+export function dayXP(
+  habits: Habit[],
+  date: string,
+  getValue: ValueLookup,
+  pending = false
+): number {
   let xp = 0
   for (const h of habits) {
     if (!h.active) continue
-    xp += habitDailyF(h, date, getValue) * (h.weight ?? 1) * XP_PER_WEIGHT
+    xp += habitXPSign(h, date, getValue, pending) * (h.weight ?? 1) * XP_PER_WEIGHT
   }
   return xp
 }
@@ -73,13 +123,13 @@ export function computeRank(habits: Habit[], logs: Log[]): RankState {
   let totalXP = 0
   let weekXP = 0
   for (const d of dateRange(from, today)) {
-    const xp = dayXP(habits, d, getValue)
+    const xp = dayXP(habits, d, getValue, d === today)
     totalXP += xp
     if (d >= curWeek) weekXP += xp
   }
-  totalXP = Math.round(totalXP)
+  totalXP = Math.max(0, Math.round(totalXP)) // podłoga: Żelazo IV / 0 XP
   weekXP = Math.round(weekXP)
-  const todayXP = Math.round(dayXP(habits, today, getValue))
+  const todayXP = Math.round(dayXP(habits, today, getValue, true))
 
   const perAreaToday = {} as Record<Area, { xp: number; max: number }>
   for (const area of AREAS) {
@@ -88,7 +138,7 @@ export function computeRank(habits: Habit[], logs: Log[]): RankState {
     let max = 0
     for (const h of inArea) {
       const w = (h.weight ?? 1) * XP_PER_WEIGHT
-      xp += habitDailyF(h, today, getValue) * w
+      xp += habitXPSign(h, today, getValue, true) * w
       max += w
     }
     perAreaToday[area] = { xp: Math.round(xp), max: Math.round(max) }

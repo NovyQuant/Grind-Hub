@@ -75,6 +75,10 @@ export function useSync() {
       const old = byKey.get(r.key)
       if (old === undefined || r.value !== old) changed = true
       if (firstRun || old === undefined) continue // brak toasta przy pierwszym wypełnieniu
+      if (r.key === 'rank' && r.value < old) {
+        toast(`📉 SPADEK — ${rank.rankLabel}. Odbij się.`)
+        buzz(BUZZ_LEVEL)
+      }
       if (r.value > old) {
         if (r.key === 'rank') {
           toast(`${rank.tier.emblem} AWANS — ${rank.rankLabel}!`)

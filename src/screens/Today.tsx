@@ -67,7 +67,11 @@ export default function Today() {
             >
               {rank.rankLabel}
             </span>
-            <span className="text-xs font-bold text-rating-good">+{rank.todayXP} XP dziś</span>
+            <span
+              className={`text-xs font-bold ${rank.todayXP < 0 ? 'text-rating-bad' : 'text-rating-good'}`}
+            >
+              {rank.todayXP >= 0 ? '+' : ''}{rank.todayXP} XP dziś
+            </span>
           </div>
           <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
             <div
