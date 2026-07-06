@@ -4,13 +4,24 @@ import {
   useAddTask,
   useUpdateTask,
   useDeleteTask,
+  useEvents,
+  useAddEvent,
+  useDeleteEvent,
   useShopping,
   useAddShoppingItem,
   useUpdateShoppingItem,
   useDeleteShoppingItem,
   useClearBoughtShopping,
 } from '../lib/queries'
-import { ShoppingItem, ShoppingTerm, Task } from '../lib/types'
+import {
+  CalendarEvent,
+  PRIORITIES,
+  PRIORITY_ORDER,
+  ShoppingItem,
+  ShoppingTerm,
+  Task,
+  TaskPriority,
+} from '../lib/types'
 import { addDays, parseISO, toISODate, todayISO } from '../lib/date'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 
@@ -63,6 +74,7 @@ function TasksView() {
   const [title, setTitle] = useState('')
   const [due, setDue] = useState<DueChoice>('today')
   const [customDate, setCustomDate] = useState(todayISO())
+  const [priority, setPriority] = useState<TaskPriority>('normal')
   const [showDone, setShowDone] = useState(false)
 
   const today = todayISO()
@@ -70,12 +82,15 @@ function TasksView() {
 
   const groups = useMemo(() => {
     const open = list.filter((t) => !t.done)
-    const byDate = (a: Task, b: Task) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999')
+    // najpierw termin, w ramach dnia priorytet
+    const cmp = (a: Task, b: Task) =>
+      (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999') ||
+      PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]
     return {
-      overdue: open.filter((t) => t.due_date && t.due_date < today).sort(byDate),
-      today: open.filter((t) => t.due_date === today),
-      upcoming: open.filter((t) => t.due_date && t.due_date > today).sort(byDate),
-      someday: open.filter((t) => !t.due_date),
+      overdue: open.filter((t) => t.due_date && t.due_date < today).sort(cmp),
+      today: open.filter((t) => t.due_date === today).sort(cmp),
+      upcoming: open.filter((t) => t.due_date && t.due_date > today).sort(cmp),
+      someday: open.filter((t) => !t.due_date).sort(cmp),
       done: list.filter((t) => t.done),
     }
   }, [list, today])
@@ -93,7 +108,7 @@ function TasksView() {
     e.preventDefault()
     if (!title.trim()) return
     buzz(BUZZ_TAP)
-    add.mutate({ title, due_date: dueDate() }, { onSuccess: () => setTitle('') })
+    add.mutate({ title, due_date: dueDate(), priority }, { onSuccess: () => setTitle('') })
   }
 
   const chips: { key: DueChoice; label: string }[] = [
@@ -143,6 +158,23 @@ function TasksView() {
               className="rounded-lg border border-border bg-surface2 px-2 py-1 text-xs outline-none [color-scheme:dark]"
             />
           )}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {PRIORITIES.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => setPriority(p.value)}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${
+                priority === p.value
+                  ? 'border-rating-good/60 bg-rating-good/10 text-text'
+                  : 'border-border text-muted'
+              }`}
+            >
+              <span className={`h-2 w-2 rounded-full ${p.dot}`} />
+              {p.label}
+            </button>
+          ))}
         </div>
       </form>
 
@@ -209,6 +241,10 @@ function TaskRow({ task, showDate }: { task: Task; showDate?: boolean }) {
   const update = useUpdateTask()
   const del = useDeleteTask()
 
+  const prio = PRIORITIES.find((p) => p.value === task.priority) ?? PRIORITIES[1]
+  const nextPrio: TaskPriority =
+    task.priority === 'high' ? 'normal' : task.priority === 'normal' ? 'low' : 'high'
+
   return (
     <div className="mb-1.5 flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5">
       <button
@@ -231,6 +267,15 @@ function TaskRow({ task, showDate }: { task: Task; showDate?: boolean }) {
           <div className="text-[11px] text-muted">{formatDay(task.due_date)}</div>
         )}
       </div>
+      {!task.done && (
+        <button
+          onClick={() => update.mutate({ id: task.id, priority: nextPrio })}
+          className="flex h-6 w-6 shrink-0 items-center justify-center"
+          title={`Priorytet: ${prio.label} (kliknij, by zmienić)`}
+        >
+          <span className={`h-2.5 w-2.5 rounded-full ${prio.dot}`} />
+        </button>
+      )}
       <button
         onClick={() => del.mutate(task.id)}
         className="text-xs text-muted hover:text-rating-bad"
@@ -257,9 +302,14 @@ function formatDay(iso: string): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()].toLowerCase().slice(0, 3)}`
 }
 
+/** "19:00:00" (postgres time) → "19:00" */
+function fmtTime(t: string | null): string | null {
+  return t ? t.slice(0, 5) : null
+}
+
 function CalendarView() {
-  const tasks = useTasks()
-  const add = useAddTask()
+  const events = useEvents()
+  const add = useAddEvent()
   const today = todayISO()
   const [month, setMonth] = useState(() => {
     const d = new Date()
@@ -267,18 +317,18 @@ function CalendarView() {
   })
   const [selected, setSelected] = useState(today)
   const [title, setTitle] = useState('')
+  const [time, setTime] = useState('')
 
-  const list = tasks.data ?? []
+  const list = events.data ?? []
   const byDate = useMemo(() => {
-    const map = new Map<string, Task[]>()
-    for (const t of list) {
-      if (!t.due_date) continue
-      map.set(t.due_date, [...(map.get(t.due_date) ?? []), t])
+    const map = new Map<string, CalendarEvent[]>()
+    for (const ev of list) {
+      map.set(ev.event_date, [...(map.get(ev.event_date) ?? []), ev])
     }
     return map
   }, [list])
 
-  if (tasks.isLoading) return <div className="p-6 text-muted">Ładowanie…</div>
+  if (events.isLoading) return <div className="p-6 text-muted">Ładowanie…</div>
 
   // siatka miesiąca, tydzień od poniedziałku
   const first = new Date(month.y, month.m, 1)
@@ -296,18 +346,26 @@ function CalendarView() {
     })
   }
 
-  const dayTasks = byDate.get(selected) ?? []
+  const dayEvents = byDate.get(selected) ?? []
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) return
     buzz(BUZZ_TAP)
-    add.mutate({ title, due_date: selected }, { onSuccess: () => setTitle('') })
+    add.mutate(
+      { title, event_date: selected, event_time: time || null },
+      {
+        onSuccess: () => {
+          setTitle('')
+          setTime('')
+        },
+      }
+    )
   }
 
   return (
     <div>
-      <div className="rounded-2xl border border-border bg-surface p-3">
+      <div className="rounded-2xl border border-border bg-surface p-2 md:p-3">
         <div className="mb-2 flex items-center justify-between px-1">
           <button onClick={() => shiftMonth(-1)} className="rounded-lg px-3 py-1 text-muted">
             ‹
@@ -319,42 +377,52 @@ function CalendarView() {
             ›
           </button>
         </div>
-        <div className="grid grid-cols-7 gap-1 text-center">
+        <div className="grid grid-cols-7 gap-0.5 md:gap-1">
           {WEEKDAYS.map((w) => (
-            <div key={w} className="py-1 text-[10px] font-semibold uppercase text-muted">
+            <div key={w} className="py-1 text-center text-[10px] font-semibold uppercase text-muted">
               {w}
             </div>
           ))}
-          {cells.map((iso, i) =>
-            iso === null ? (
-              <div key={`x${i}`} />
-            ) : (
+          {cells.map((iso, i) => {
+            if (iso === null) return <div key={`x${i}`} />
+            const evs = byDate.get(iso) ?? []
+            const isSel = iso === selected
+            return (
               <button
                 key={iso}
                 onClick={() => setSelected(iso)}
-                className={`relative flex aspect-square flex-col items-center justify-center rounded-lg text-sm tabular-nums ${
-                  iso === selected
-                    ? 'bg-rating-good text-bg font-bold'
-                    : iso === today
-                      ? 'border border-rating-good/60 text-rating-good'
-                      : 'text-text hover:bg-surface2'
+                className={`flex min-h-[3.4rem] flex-col items-stretch gap-0.5 overflow-hidden rounded-lg p-0.5 text-left md:min-h-[4.5rem] md:p-1 ${
+                  isSel
+                    ? 'bg-rating-good/15 ring-1 ring-rating-good'
+                    : evs.length > 0
+                      ? 'bg-surface2 hover:bg-surface2/70'
+                      : 'hover:bg-surface2/60'
                 }`}
               >
-                {parseISO(iso).getDate()}
-                {(byDate.get(iso)?.length ?? 0) > 0 && (
+                <span
+                  className={`px-0.5 text-[11px] font-semibold tabular-nums leading-none md:text-xs ${
+                    iso === today ? 'text-rating-good' : 'text-muted'
+                  }`}
+                >
+                  {parseISO(iso).getDate()}
+                </span>
+                {evs.slice(0, 2).map((ev) => (
                   <span
-                    className={`absolute bottom-1 h-1.5 w-1.5 rounded-full ${
-                      iso === selected
-                        ? 'bg-bg'
-                        : byDate.get(iso)!.every((t) => t.done)
-                          ? 'bg-muted'
-                          : 'bg-rating-mid'
-                    }`}
-                  />
+                    key={ev.id}
+                    className="truncate rounded bg-rating-good/15 px-0.5 text-[9px] leading-tight text-text md:text-[10px]"
+                  >
+                    {fmtTime(ev.event_time) && (
+                      <span className="font-semibold text-rating-good">{fmtTime(ev.event_time)} </span>
+                    )}
+                    {ev.title}
+                  </span>
+                ))}
+                {evs.length > 2 && (
+                  <span className="px-0.5 text-[9px] leading-none text-muted">+{evs.length - 2}</span>
                 )}
               </button>
             )
-          )}
+          })}
         </div>
       </div>
 
@@ -366,8 +434,14 @@ function CalendarView() {
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder={`Plan na ${formatDay(selected)}…`}
+            placeholder="np. Siłownia, dentysta, spotkanie…"
             className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2.5 outline-none focus:border-rating-good"
+          />
+          <input
+            type="time"
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+            className="w-24 rounded-xl border border-border bg-surface px-2 py-2.5 text-sm outline-none [color-scheme:dark]"
           />
           <button
             type="submit"
@@ -376,14 +450,33 @@ function CalendarView() {
             Dodaj
           </button>
         </form>
-        {dayTasks.length === 0 ? (
+        {dayEvents.length === 0 ? (
           <p className="rounded-2xl border border-border bg-surface p-4 text-center text-sm text-muted">
-            Brak planów na ten dzień.
+            Brak wydarzeń tego dnia.
           </p>
         ) : (
-          dayTasks.map((t) => <TaskRow key={t.id} task={t} />)
+          dayEvents.map((ev) => <EventRow key={ev.id} ev={ev} />)
         )}
       </div>
+    </div>
+  )
+}
+
+function EventRow({ ev }: { ev: CalendarEvent }) {
+  const del = useDeleteEvent()
+  return (
+    <div className="mb-1.5 flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5">
+      <span className="w-12 shrink-0 text-sm font-semibold tabular-nums text-rating-good">
+        {fmtTime(ev.event_time) ?? '—'}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm">{ev.title}</span>
+      <button
+        onClick={() => del.mutate(ev.id)}
+        className="text-xs text-muted hover:text-rating-bad"
+        title="Usuń"
+      >
+        ✕
+      </button>
     </div>
   )
 }

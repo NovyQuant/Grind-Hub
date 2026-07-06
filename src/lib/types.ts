@@ -70,12 +70,32 @@ export interface Abstinence {
   sort_order: number
 }
 
-// Plan: taski (due_date = dzień w kalendarzu, null = bez terminu)
+// Plan: taski (due_date = termin, null = bez terminu)
+export type TaskPriority = 'high' | 'normal' | 'low'
+
 export interface Task {
   id: string
   title: string
   due_date: string | null // YYYY-MM-DD
+  priority: TaskPriority
   done: boolean
+  created_at: string
+}
+
+export const PRIORITIES: { value: TaskPriority; label: string; dot: string }[] = [
+  { value: 'high', label: 'Pilny', dot: 'bg-rating-bad' },
+  { value: 'normal', label: 'Normalny', dot: 'bg-rating-mid' },
+  { value: 'low', label: 'Luźny', dot: 'bg-muted' },
+]
+
+export const PRIORITY_ORDER: Record<TaskPriority, number> = { high: 0, normal: 1, low: 2 }
+
+// Kalendarz: wydarzenia/spotkania (osobno od tasków)
+export interface CalendarEvent {
+  id: string
+  title: string
+  event_date: string // YYYY-MM-DD
+  event_time: string | null // HH:MM:SS (postgres time)
   created_at: string
 }
 

@@ -3,12 +3,14 @@ import { supabase } from './supabase'
 import {
   Abstinence,
   AttributeSnapshot,
+  CalendarEvent,
   Habit,
   Log,
   RecordRow,
   ShoppingItem,
   ShoppingTerm,
   Task,
+  TaskPriority,
 } from './types'
 import { todayISO } from './date'
 
@@ -282,10 +284,10 @@ export function useTasks() {
 export function useAddTask() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { title: string; due_date: string | null }) => {
+    mutationFn: async (input: { title: string; due_date: string | null; priority: TaskPriority }) => {
       const { error } = await supabase
         .from('tasks')
-        .insert({ title: input.title.trim(), due_date: input.due_date })
+        .insert({ title: input.title.trim(), due_date: input.due_date, priority: input.priority })
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
@@ -295,7 +297,7 @@ export function useAddTask() {
 export function useUpdateTask() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { id: string } & Partial<Pick<Task, 'title' | 'due_date' | 'done'>>) => {
+    mutationFn: async (input: { id: string } & Partial<Pick<Task, 'title' | 'due_date' | 'done' | 'priority'>>) => {
       const { id, ...patch } = input
       const { error } = await supabase.from('tasks').update(patch).eq('id', id)
       if (error) throw error
@@ -333,6 +335,58 @@ export function useDeleteTask() {
       if (ctx?.prev) qc.setQueryData(['tasks'], ctx.prev)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+}
+
+// ---------- Kalendarz: wydarzenia --------------------------------------
+
+export function useEvents() {
+  return useQuery({
+    queryKey: ['events'],
+    queryFn: async (): Promise<CalendarEvent[]> => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .order('event_date', { ascending: true })
+        .order('event_time', { ascending: true, nullsFirst: true })
+      if (error) throw error
+      return (data ?? []) as CalendarEvent[]
+    },
+  })
+}
+
+export function useAddEvent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { title: string; event_date: string; event_time: string | null }) => {
+      const { error } = await supabase.from('events').insert({
+        title: input.title.trim(),
+        event_date: input.event_date,
+        event_time: input.event_time,
+      })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['events'] }),
+  })
+}
+
+export function useDeleteEvent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('events').delete().eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['events'] })
+      const prev = qc.getQueryData<CalendarEvent[]>(['events']) ?? []
+      qc.setQueryData<CalendarEvent[]>(['events'], prev.filter((e) => e.id !== id))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['events'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['events'] }),
   })
 }
 
