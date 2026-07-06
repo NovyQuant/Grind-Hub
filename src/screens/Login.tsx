@@ -1,9 +1,11 @@
 import { FormEvent, useState } from 'react'
 import { useAuth } from '../lib/auth'
 
+const EMAIL_KEY = 'gh_login_email'
+
 export default function Login() {
   const { signIn } = useAuth()
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => localStorage.getItem(EMAIL_KEY) ?? '')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -14,15 +16,16 @@ export default function Login() {
     setError(null)
     const { error } = await signIn(email.trim(), password)
     if (error) setError(error)
+    else localStorage.setItem(EMAIL_KEY, email.trim())
     setBusy(false)
   }
 
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-6 p-6">
       <div className="text-center">
-        <div className="text-4xl">⚽</div>
-        <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Life Hub</h1>
-        <p className="text-sm text-muted">Twój profil zawodnika</p>
+        <div className="text-4xl">🔥</div>
+        <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Grind Hub</h1>
+        <p className="text-sm text-muted">Grind never stops.</p>
       </div>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
