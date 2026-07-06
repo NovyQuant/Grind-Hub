@@ -70,6 +70,26 @@ export interface Abstinence {
   sort_order: number
 }
 
+// Plan: taski (due_date = dzień w kalendarzu, null = bez terminu)
+export interface Task {
+  id: string
+  title: string
+  due_date: string | null // YYYY-MM-DD
+  done: boolean
+  created_at: string
+}
+
+// Zakupy: short = na teraz, long = kiedyś / większe
+export type ShoppingTerm = 'short' | 'long'
+
+export interface ShoppingItem {
+  id: string
+  name: string
+  term: ShoppingTerm
+  done: boolean
+  created_at: string
+}
+
 // scale3 wartości
 export const SCALE3 = [
   { value: 0, label: 'słabo', short: '😕' },

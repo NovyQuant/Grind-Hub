@@ -5,6 +5,7 @@ import { useSync } from './lib/useSync'
 import { useReminder } from './lib/reminder'
 import Login from './screens/Login'
 import Today from './screens/Today'
+import Planner from './screens/Planner'
 import Levels from './screens/Levels'
 import Stats from './screens/Stats'
 import Addictions from './screens/Addictions'
@@ -25,11 +26,23 @@ function ConfigError() {
 
 const TABS = [
   { to: '/', label: 'Dziś', icon: '🔥', end: true },
+  { to: '/plan', label: 'Plan', icon: '📅', end: false },
   { to: '/poziomy', label: 'Poziomy', icon: '🎮', end: false },
   { to: '/stats', label: 'FM Stats', icon: '⚽', end: false },
   { to: '/nalogi', label: 'Nałogi', icon: '🚭', end: false },
   { to: '/ustawienia', label: 'Więcej', icon: '⚙️', end: false },
 ]
+
+function MobileHeader() {
+  return (
+    <header className="sticky top-0 z-30 border-b border-border bg-surface/95 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
+      <div className="flex items-center justify-center gap-2 py-2.5">
+        <span className="text-lg leading-none">🔥</span>
+        <span className="text-base font-extrabold tracking-tight">Grind Hub</span>
+      </div>
+    </header>
+  )
+}
 
 function BottomNav() {
   return (
@@ -90,10 +103,12 @@ function AuthedApp() {
   return (
     <div className="min-h-full md:pl-60">
       <Sidebar />
+      <MobileHeader />
       <main className="mx-auto w-full max-w-5xl">
         <div className="app-scroll md:pb-8">
           <Routes>
             <Route path="/" element={<Today />} />
+            <Route path="/plan" element={<Planner />} />
             <Route path="/poziomy" element={<Levels />} />
             <Route path="/stats" element={<Stats />} />
             <Route path="/nalogi" element={<Addictions />} />

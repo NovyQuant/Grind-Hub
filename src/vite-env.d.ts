@@ -9,3 +9,6 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
+
+/** Data builda — wstrzykiwana w vite.config.ts (define). */
+declare const __BUILD_TIME__: string

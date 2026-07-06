@@ -155,6 +155,13 @@ export default function Settings() {
         Wyloguj
       </button>
 
+      <p className="mt-4 text-center text-[11px] text-muted">
+        Build: {__BUILD_TIME__} ·{' '}
+        <button onClick={() => window.location.reload()} className="underline">
+          odśwież apkę
+        </button>
+      </p>
+
       {draft && (
         <Editor
           draft={draft}

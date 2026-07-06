@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
-import { Abstinence, AttributeSnapshot, Habit, Log, RecordRow } from './types'
+import {
+  Abstinence,
+  AttributeSnapshot,
+  Habit,
+  Log,
+  RecordRow,
+  ShoppingItem,
+  ShoppingTerm,
+  Task,
+} from './types'
 import { todayISO } from './date'
 
 // ---------- Queries --------------------------------------------------
@@ -251,5 +260,167 @@ export function useDeleteAbstinence() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['abstinences'] }),
+  })
+}
+
+// ---------- Plan: taski -----------------------------------------------
+
+export function useTasks() {
+  return useQuery({
+    queryKey: ['tasks'],
+    queryFn: async (): Promise<Task[]> => {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      return (data ?? []) as Task[]
+    },
+  })
+}
+
+export function useAddTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { title: string; due_date: string | null }) => {
+      const { error } = await supabase
+        .from('tasks')
+        .insert({ title: input.title.trim(), due_date: input.due_date })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+}
+
+export function useUpdateTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { id: string } & Partial<Pick<Task, 'title' | 'due_date' | 'done'>>) => {
+      const { id, ...patch } = input
+      const { error } = await supabase.from('tasks').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['tasks'] })
+      const prev = qc.getQueryData<Task[]>(['tasks']) ?? []
+      qc.setQueryData<Task[]>(
+        ['tasks'],
+        prev.map((t) => (t.id === input.id ? { ...t, ...input } : t))
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['tasks'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+}
+
+export function useDeleteTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('tasks').delete().eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['tasks'] })
+      const prev = qc.getQueryData<Task[]>(['tasks']) ?? []
+      qc.setQueryData<Task[]>(['tasks'], prev.filter((t) => t.id !== id))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['tasks'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+}
+
+// ---------- Zakupy -----------------------------------------------------
+
+export function useShopping() {
+  return useQuery({
+    queryKey: ['shopping'],
+    queryFn: async (): Promise<ShoppingItem[]> => {
+      const { data, error } = await supabase
+        .from('shopping_items')
+        .select('*')
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      return (data ?? []) as ShoppingItem[]
+    },
+  })
+}
+
+export function useAddShoppingItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { name: string; term: ShoppingTerm }) => {
+      const { error } = await supabase
+        .from('shopping_items')
+        .insert({ name: input.name.trim(), term: input.term })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['shopping'] }),
+  })
+}
+
+export function useUpdateShoppingItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { id: string } & Partial<Pick<ShoppingItem, 'done' | 'term' | 'name'>>) => {
+      const { id, ...patch } = input
+      const { error } = await supabase.from('shopping_items').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['shopping'] })
+      const prev = qc.getQueryData<ShoppingItem[]>(['shopping']) ?? []
+      qc.setQueryData<ShoppingItem[]>(
+        ['shopping'],
+        prev.map((s) => (s.id === input.id ? { ...s, ...input } : s))
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['shopping'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['shopping'] }),
+  })
+}
+
+export function useDeleteShoppingItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('shopping_items').delete().eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['shopping'] })
+      const prev = qc.getQueryData<ShoppingItem[]>(['shopping']) ?? []
+      qc.setQueryData<ShoppingItem[]>(['shopping'], prev.filter((s) => s.id !== id))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['shopping'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['shopping'] }),
+  })
+}
+
+/** Usuń wszystkie kupione pozycje z danej listy. */
+export function useClearBoughtShopping() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (term: ShoppingTerm) => {
+      const { error } = await supabase
+        .from('shopping_items')
+        .delete()
+        .eq('term', term)
+        .eq('done', true)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['shopping'] }),
   })
 }

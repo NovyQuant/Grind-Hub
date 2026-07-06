@@ -66,8 +66,27 @@ create table abstinences (
   created_at timestamptz default now()
 );
 
+-- Taski / plany: due_date = dzień w kalendarzu, null = bez terminu
+create table if not exists tasks (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  due_date date,
+  done boolean not null default false,
+  created_at timestamptz default now()
+);
+
+-- Zakupy: term 'short' (na teraz) | 'long' (long term)
+create table if not exists shopping_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  term text not null default 'short',
+  done boolean not null default false,
+  created_at timestamptz default now()
+);
+
 create index if not exists logs_date_idx on logs (log_date);
 create index if not exists snapshots_area_idx on attribute_snapshots (area, snap_date);
+create index if not exists tasks_due_idx on tasks (due_date);
 
 -- ---------- Row Level Security ---------------------------------------
 alter table habits enable row level security;
@@ -75,12 +94,16 @@ alter table logs enable row level security;
 alter table attribute_snapshots enable row level security;
 alter table records enable row level security;
 alter table abstinences enable row level security;
+alter table tasks enable row level security;
+alter table shopping_items enable row level security;
 
 create policy "auth full habits" on habits for all to authenticated using (true) with check (true);
 create policy "auth full logs" on logs for all to authenticated using (true) with check (true);
 create policy "auth full snapshots" on attribute_snapshots for all to authenticated using (true) with check (true);
 create policy "auth full records" on records for all to authenticated using (true) with check (true);
 create policy "auth full abstinences" on abstinences for all to authenticated using (true) with check (true);
+create policy "auth full tasks" on tasks for all to authenticated using (true) with check (true);
+create policy "auth full shopping" on shopping_items for all to authenticated using (true) with check (true);
 
 -- ---------- Seed nawyków ---------------------------------------------
 insert into habits
