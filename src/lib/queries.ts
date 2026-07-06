@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import {
   Abstinence,
-  AttributeSnapshot,
   CalendarEvent,
   Habit,
   Log,
@@ -40,20 +39,6 @@ export function useLogs() {
         .order('log_date', { ascending: true })
       if (error) throw error
       return (data ?? []) as Log[]
-    },
-  })
-}
-
-export function useSnapshots() {
-  return useQuery({
-    queryKey: ['snapshots'],
-    queryFn: async (): Promise<AttributeSnapshot[]> => {
-      const { data, error } = await supabase
-        .from('attribute_snapshots')
-        .select('*')
-        .order('snap_date', { ascending: true })
-      if (error) throw error
-      return (data ?? []) as AttributeSnapshot[]
     },
   })
 }

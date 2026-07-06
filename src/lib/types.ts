@@ -49,12 +49,6 @@ export interface Log {
   note: string | null
 }
 
-export interface AttributeSnapshot {
-  snap_date: string
-  area: Area
-  rating: number
-}
-
 export interface RecordRow {
   key: string
   label: string
@@ -126,7 +120,3 @@ export const AREA_BAD_THRESHOLD = 0.5 // dzień "poza targetem" gdy f < 0.5
 export const LEVEL_DECAY_BAD_DAYS = 7 // tyle słabych dni obniża poziom o 1
 export const DAY_MILESTONES = [7, 30, 100, 250, 365]
 export const WEEK_MILESTONES = [4, 8, 12, 26, 52]
-
-// FM stats (EMA)
-export const START_RATING = 8.0
-export const EMA_ALPHA = 0.05

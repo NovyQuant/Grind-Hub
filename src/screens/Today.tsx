@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
+import { NavLink } from 'react-router-dom'
 import { useHabits, useLogs, useUpsertLog, useDeleteLog } from '../lib/queries'
 import { Habit, Log, SCALE3, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
 import { todayISO } from '../lib/date'
 import { computeProgress } from '../lib/progress'
+import { computeRank } from '../lib/rank'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 
 /** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania). */
@@ -30,6 +32,10 @@ export default function Today() {
     () => computeProgress(habits.data ?? [], logsList),
     [habits.data, logsList]
   )
+  const rank = useMemo(
+    () => computeRank(habits.data ?? [], logsList),
+    [habits.data, logsList]
+  )
 
   if (habits.isLoading || logs.isLoading)
     return <div className="p-6 text-muted">Ładowanie…</div>
@@ -46,9 +52,91 @@ export default function Today() {
 
   return (
     <div className="p-4 md:p-6">
-      {/* Streaki per obszar */}
-      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3">
-        {AREAS.map((area) => {
+      {/* Pasek rangi */}
+      <NavLink
+        to="/ranga"
+        className="mb-3 flex items-center gap-3 rounded-2xl border bg-gradient-to-r from-surface2 to-surface p-3"
+        style={{ borderColor: `${rank.tier.color}66` }}
+      >
+        <span className="text-3xl leading-none">{rank.tier.emblem}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between">
+            <span
+              className="text-sm font-black uppercase tracking-wide"
+              style={{ color: rank.tier.color }}
+            >
+              {rank.rankLabel}
+            </span>
+            <span className="text-xs font-bold text-rating-good">+{rank.todayXP} XP dziś</span>
+          </div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${rank.divCost === Infinity ? 100 : Math.min(100, (rank.lpInDiv / rank.divCost) * 100)}%`,
+                background: rank.tier.color,
+              }}
+            />
+          </div>
+          {rank.nextLabel && (
+            <div className="mt-0.5 text-[10px] text-muted">
+              brakuje {rank.toNext} XP → {rank.nextLabel}
+            </div>
+          )}
+        </div>
+      </NavLink>
+
+      {/* Streaki tygodniowe — cele tygodnia (wyróżnione) */}
+      <div className="mb-2 flex flex-col gap-2">
+        {AREAS.filter((a) => progress.streaks[a].unit === 'week').map((area) => {
+          const s = progress.streaks[area]
+          const done = s.periodDone
+          const pct = s.weekTarget > 0 ? Math.min(100, (s.weekAcc / s.weekTarget) * 100) : 0
+          return (
+            <div
+              key={area}
+              className={`rounded-2xl border p-3.5 ${
+                done
+                  ? 'border-rating-good/60 bg-rating-good/10'
+                  : 'border-[#a855f7]/50 bg-[#a855f7]/5'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{AREA_ICONS[area]}</span>
+                <span className="font-bold">{AREA_LABELS[area]}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${
+                    done ? 'bg-rating-good/20 text-rating-good' : 'bg-[#a855f7]/20 text-[#c084fc]'
+                  }`}
+                >
+                  cel tygodnia
+                </span>
+                <span className="ml-auto text-xl font-black tabular-nums">
+                  🔥 {s.current}
+                  <span className="ml-1 text-xs font-medium text-muted">tyg</span>
+                </span>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface">
+                  <div
+                    className={`h-full rounded-full transition-all ${done ? 'bg-rating-good' : 'bg-[#a855f7]'}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span
+                  className={`text-sm font-bold tabular-nums ${done ? 'text-rating-good' : 'text-[#c084fc]'}`}
+                >
+                  {done ? '✓ zaliczony' : `${s.weekAcc}/${s.weekTarget}`}
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Streaki dzienne */}
+      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        {AREAS.filter((a) => progress.streaks[a].unit === 'day').map((area) => {
           const s = progress.streaks[area]
           const done = s.periodDone
           return (
@@ -64,18 +152,10 @@ export default function Today() {
               </div>
               <div className="mt-1 text-2xl font-black tabular-nums">
                 🔥 {s.current}
-                <span className="ml-1 text-xs font-medium text-muted">
-                  {s.unit === 'week' ? 'tyg' : 'dni'}
-                </span>
+                <span className="ml-1 text-xs font-medium text-muted">dni</span>
               </div>
               <div className={`mt-0.5 text-[11px] ${done ? 'text-rating-good' : 'text-muted'}`}>
-                {s.unit === 'week'
-                  ? done
-                    ? '✓ tydzień zaliczony'
-                    : `${s.weekAcc}/${s.weekTarget} w tym tygodniu`
-                  : done
-                    ? '✓ dziś zaliczone'
-                    : 'dziś jeszcze nie'}
+                {done ? '✓ dziś zaliczone' : 'dziś jeszcze nie'}
               </div>
             </div>
           )
@@ -135,7 +215,12 @@ function HabitRow({ habit, date, logs }: { habit: Habit; date: string; logs: Log
       </div>
       {habit.input_kind === 'scale3' && <Scale3Input habit={habit} date={date} log={log} />}
       {habit.input_kind === 'check' && <CheckInput habit={habit} date={date} log={log} />}
-      {habit.input_kind === 'number' && <NumberInput habit={habit} date={date} log={log} />}
+      {habit.input_kind === 'number' &&
+        (habit.score_mode === 'range' ? (
+          <DurationInput habit={habit} date={date} log={log} />
+        ) : (
+          <NumberInput habit={habit} date={date} log={log} />
+        ))}
     </div>
   )
 }
@@ -221,6 +306,66 @@ function CheckInput({ habit, date, log }: { habit: Habit; date: string; log?: Lo
   )
 }
 
+/** Godziny dziesiętne → "h:mm" (6.92 → "6:55"). */
+function fmtDur(v: number): string {
+  const h = Math.floor(v)
+  const m = Math.round((v - h) * 60)
+  return `${h}:${String(m).padStart(2, '0')}`
+}
+
+/** Sen: dokładny czas h:mm — chipy + picker czasu, zapis jako godziny dziesiętne. */
+function DurationInput({ habit, date, log }: { habit: Habit; date: string; log?: Log }) {
+  const upsert = useUpsertLog()
+  const chips = [6.5, 7, 7.5, 8]
+
+  function commit(v: number) {
+    upsert.mutate({ habit_id: habit.id, log_date: date, value: Math.round(v * 100) / 100 })
+  }
+
+  const timeVal = log
+    ? `${String(Math.floor(log.value)).padStart(2, '0')}:${String(
+        Math.round((log.value - Math.floor(log.value)) * 60)
+      ).padStart(2, '0')}`
+    : ''
+
+  return (
+    <div>
+      <div className="mb-2 flex gap-2">
+        {chips.map((c) => (
+          <button
+            key={c}
+            onClick={() => {
+              buzz(BUZZ_TAP)
+              commit(c)
+            }}
+            className={`flex-1 rounded-lg border py-2 text-sm font-semibold ${
+              log?.value === c
+                ? 'border-rating-good bg-rating-good/15 text-rating-good'
+                : 'border-border bg-surface2 text-muted'
+            }`}
+          >
+            {fmtDur(c)}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="time"
+          value={timeVal}
+          onChange={(e) => {
+            const [h, m] = e.target.value.split(':').map(Number)
+            if (!Number.isNaN(h) && !Number.isNaN(m)) commit(h + m / 60)
+          }}
+          className="rounded-xl border border-border bg-surface2 px-3 py-2.5 text-lg font-semibold outline-none focus:border-rating-good [color-scheme:dark]"
+        />
+        <span className="text-xs text-muted">
+          {log ? `zapisane: ${fmtDur(log.value)}h snu` : 'dokładny czas snu (g:mm)'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function NumberInput({ habit, date, log }: { habit: Habit; date: string; log?: Log }) {
   const upsert = useUpsertLog()
   const del = useDeleteLog()
@@ -246,12 +391,7 @@ function NumberInput({ habit, date, log }: { habit: Habit; date: string; log?: L
   }
 
   // szybkie chipy
-  const chips =
-    habit.score_mode === 'range'
-      ? [6, 7, 8, 9]
-      : habit.score_mode === 'at_most'
-        ? [0, 20, 50, 100]
-        : []
+  const chips = habit.score_mode === 'at_most' ? [0, 20, 50, 100] : []
 
   const saved = log != null && String(log.value) === val.replace(',', '.')
 
@@ -284,7 +424,7 @@ function NumberInput({ habit, date, log }: { habit: Habit; date: string; log?: L
           inputMode="decimal"
           value={val}
           onChange={(e) => setVal(e.target.value)}
-          placeholder={habit.score_mode === 'range' ? 'godziny' : 'zł'}
+          placeholder="zł"
           className="min-w-0 flex-1 rounded-xl border border-border bg-surface2 px-3 py-2.5 text-lg font-semibold outline-none focus:border-rating-good"
         />
         <button

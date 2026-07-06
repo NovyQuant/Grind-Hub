@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useHabits, useLogs, useRecords, useSnapshots, saveRecords } from './queries'
-import { backfillSnapshots } from './snapshots'
+import { useHabits, useLogs, useRecords, saveRecords } from './queries'
 import { computeProgress } from './progress'
+import { computeRank } from './rank'
 import {
   AREAS,
   AREA_ICONS,
@@ -24,33 +24,18 @@ function reachedMilestone(milestones: number[], value: number): number {
 }
 
 /**
- * Po zmianie danych: dolicz snapshoty (FM stats) i sprawdź czy padł nowy poziom
- * lub kamień milowy streaka (per obszar) → toast + wibracja + zapis do `records`.
+ * Po zmianie danych sprawdź: awans rangi, nowy poziom obszaru, kamień milowy
+ * streaka (per obszar) → toast + wibracja + zapis do `records`.
  */
 export function useSync() {
   const habits = useHabits()
   const logs = useLogs()
-  const snapshots = useSnapshots()
   const records = useRecords()
   const qc = useQueryClient()
   const toast = useToast()
 
-  const snapDoneRef = useRef(false)
   const lastHashRef = useRef('')
 
-  // Backfill snapshotów FM — raz na otwarcie
-  useEffect(() => {
-    if (snapDoneRef.current) return
-    if (!habits.data || !logs.data || !snapshots.data) return
-    snapDoneRef.current = true
-    backfillSnapshots(habits.data, logs.data, snapshots.data)
-      .then((n) => {
-        if (n > 0) qc.invalidateQueries({ queryKey: ['snapshots'] })
-      })
-      .catch((e) => console.error('backfillSnapshots:', e))
-  }, [habits.data, logs.data, snapshots.data, qc])
-
-  // Poziomy + kamienie milowe
   useEffect(() => {
     if (!habits.data || !logs.data || !records.data) return
     const hash = `${todayISO()}:${logs.data.map((l) => `${l.habit_id}${l.log_date}${l.value}`).join(',')}`
@@ -58,9 +43,16 @@ export function useSync() {
     lastHashRef.current = hash
 
     const p = computeProgress(habits.data, logs.data)
+    const rank = computeRank(habits.data, logs.data)
     const today = todayISO()
 
     const fresh: RecordRow[] = [
+      {
+        key: 'rank',
+        label: `Ranga — ${rank.rankLabel}`,
+        value: rank.ordinal,
+        achieved_at: today,
+      },
       ...AREAS.map((a) => ({
         key: `streak_${a}`,
         label: `Streak — ${AREA_LABELS[a]}`,
@@ -84,7 +76,10 @@ export function useSync() {
       if (old === undefined || r.value !== old) changed = true
       if (firstRun || old === undefined) continue // brak toasta przy pierwszym wypełnieniu
       if (r.value > old) {
-        if (r.key.startsWith('level_')) {
+        if (r.key === 'rank') {
+          toast(`${rank.tier.emblem} AWANS — ${rank.rankLabel}!`)
+          buzz(BUZZ_MILESTONE)
+        } else if (r.key.startsWith('level_')) {
           const area = r.key.replace('level_', '') as keyof typeof AREA_LABELS
           toast(`${AREA_ICONS[area]} ${AREA_LABELS[area]} — awans na poziom ${r.value}!`)
           buzz(BUZZ_LEVEL)

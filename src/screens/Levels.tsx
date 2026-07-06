@@ -65,14 +65,22 @@ export default function Levels() {
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              <div className="mt-1 flex justify-between text-[11px] text-muted">
-                <span>
-                  {lv.progress}/{lv.threshold} dobrych dni → poziom {lv.level + 1}
+              <div className="mt-1.5 flex items-baseline justify-between">
+                <span className="text-xs font-semibold">
+                  brakuje{' '}
+                  <span className="text-rating-good">{lv.threshold - lv.progress}</span>{' '}
+                  {lv.threshold - lv.progress === 1 ? 'dobrego dnia' : 'dobrych dni'} do lvl{' '}
+                  {lv.level + 1}
                 </span>
-                {lv.badDays > 0 && (
-                  <span className="text-rating-bad">⚠ {lv.badDays}/7 słabych</span>
-                )}
+                <span className="text-[11px] text-muted">
+                  {lv.progress}/{lv.threshold}
+                </span>
               </div>
+              {lv.badDays > 0 && (
+                <div className="mt-0.5 text-[11px] text-rating-bad">
+                  ⚠ {lv.badDays}/7 słabych dni — {7 - lv.badDays} do spadku
+                </div>
+              )}
             </div>
           )
         })}

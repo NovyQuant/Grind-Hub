@@ -1,5 +1,5 @@
-import { AREAS, Area, EMA_ALPHA, Habit, START_RATING } from './types'
-import { addDays, dateRange } from './date'
+import { Area, Habit } from './types'
+import { addDays } from './date'
 
 /** Wartość logu nawyku w danym dniu, albo undefined gdy brak wpisu. */
 export type ValueLookup = (habitId: string, date: string) => number | undefined
@@ -81,58 +81,8 @@ export function areaDailyF(
   return den > 0 ? num / den : null
 }
 
-// ---------- FM Stats (EMA rating 1–20) -------------------------------
-
-export type RatingsByDate = Record<string, Record<Area, number>>
-
-export function computeRatings(
-  habits: Habit[],
-  from: string,
-  to: string,
-  initial: Record<Area, number>,
-  getValue: ValueLookup
-): RatingsByDate {
-  const out: RatingsByDate = {}
-  let prev = { ...initial }
-  for (const date of dateRange(from, to)) {
-    const day = {} as Record<Area, number>
-    for (const area of AREAS) {
-      const f = areaDailyF(area, habits, date, getValue)
-      day[area] = f === null ? prev[area] : (1 - EMA_ALPHA) * prev[area] + EMA_ALPHA * (20 * f)
-    }
-    out[date] = day
-    prev = day
-  }
-  return out
-}
-
-export function overallOf(day: Record<Area, number>): number {
-  let sum = 0
-  for (const area of AREAS) sum += day[area]
-  return sum / AREAS.length
-}
-
-export function initialRatings(): Record<Area, number> {
-  const r = {} as Record<Area, number>
-  for (const area of AREAS) r[area] = START_RATING
-  return r
-}
-
 export function makeLookup(logs: { habit_id: string; log_date: string; value: number }[]): ValueLookup {
   const map = new Map<string, number>()
   for (const l of logs) map.set(`${l.habit_id}|${l.log_date}`, l.value)
   return (habitId, date) => map.get(`${habitId}|${date}`)
-}
-
-/** Kolor ratingu wg progu FM: <8 czerwony, 8–13 pomarańczowy, >13 zielony. */
-export function ratingColor(r: number): string {
-  if (r < 8) return '#e5484d'
-  if (r <= 13) return '#f5a524'
-  return '#30c85e'
-}
-
-export function ratingClass(r: number): string {
-  if (r < 8) return 'text-rating-bad'
-  if (r <= 13) return 'text-rating-mid'
-  return 'text-rating-good'
 }
