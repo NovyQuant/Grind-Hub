@@ -1,5 +1,5 @@
 {
-  "name": "life-hub",
+  "name": "grind-hub",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "db:push": "sh scripts/db-push.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

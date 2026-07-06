@@ -13,6 +13,17 @@ const queryClient = new QueryClient({
   },
 })
 
+// Nowy service worker (autoUpdate) przejmuje kontrolę od razu po instalacji —
+// przeładuj stronę, żeby od razu pokazać świeżą wersję zamiast starego cache.
+if ('serviceWorker' in navigator) {
+  let reloaded = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return
+    reloaded = true
+    window.location.reload()
+  })
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
