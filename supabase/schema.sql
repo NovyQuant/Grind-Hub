@@ -90,6 +90,7 @@ create table if not exists shopping_items (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   term text not null default 'short',
+  price numeric,                     -- zł, null = nie podano
   done boolean not null default false,
   created_at timestamptz default now()
 );

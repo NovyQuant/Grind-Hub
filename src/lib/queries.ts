@@ -409,10 +409,10 @@ export function useShopping() {
 export function useAddShoppingItem() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { name: string; term: ShoppingTerm }) => {
+    mutationFn: async (input: { name: string; term: ShoppingTerm; price: number | null }) => {
       const { error } = await supabase
         .from('shopping_items')
-        .insert({ name: input.name.trim(), term: input.term })
+        .insert({ name: input.name.trim(), term: input.term, price: input.price })
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['shopping'] }),
@@ -422,7 +422,7 @@ export function useAddShoppingItem() {
 export function useUpdateShoppingItem() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { id: string } & Partial<Pick<ShoppingItem, 'done' | 'term' | 'name'>>) => {
+    mutationFn: async (input: { id: string } & Partial<Pick<ShoppingItem, 'done' | 'term' | 'name' | 'price'>>) => {
       const { id, ...patch } = input
       const { error } = await supabase.from('shopping_items').update(patch).eq('id', id)
       if (error) throw error

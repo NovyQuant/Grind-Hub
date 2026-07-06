@@ -106,6 +106,7 @@ export interface ShoppingItem {
   id: string
   name: string
   term: ShoppingTerm
+  price: number | null // zł
   done: boolean
   created_at: string
 }

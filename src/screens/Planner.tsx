@@ -179,10 +179,10 @@ function TasksView() {
       </form>
 
       {groups.overdue.length > 0 && (
-        <TaskGroup label="⏰ Zaległe" tone="bad" items={groups.overdue} showDate />
+        <TaskGroup label="⏰ Zaległe" tone="bad" items={groups.overdue} />
       )}
       <TaskGroup label="🔥 Dziś" items={groups.today} empty="Nic na dziś. Dodaj coś powyżej." />
-      {groups.upcoming.length > 0 && <TaskGroup label="📆 Nadchodzące" items={groups.upcoming} showDate />}
+      {groups.upcoming.length > 0 && <TaskGroup label="📆 Nadchodzące" items={groups.upcoming} />}
       {groups.someday.length > 0 && <TaskGroup label="🗂 Bez terminu" items={groups.someday} />}
 
       {groups.done.length > 0 && (
@@ -193,7 +193,7 @@ function TasksView() {
           {showDone && (
             <div className="mt-2">
               {groups.done.map((t) => (
-                <TaskRow key={t.id} task={t} showDate />
+                <TaskRow key={t.id} task={t} />
               ))}
             </div>
           )}
@@ -207,13 +207,11 @@ function TaskGroup({
   label,
   items,
   empty,
-  showDate,
   tone,
 }: {
   label: string
   items: Task[]
   empty?: string
-  showDate?: boolean
   tone?: 'bad'
 }) {
   if (items.length === 0 && !empty) return null
@@ -231,58 +229,102 @@ function TaskGroup({
           {empty}
         </p>
       ) : (
-        items.map((t) => <TaskRow key={t.id} task={t} showDate={showDate} />)
+        items.map((t) => <TaskRow key={t.id} task={t} />)
       )}
     </div>
   )
 }
 
-function TaskRow({ task, showDate }: { task: Task; showDate?: boolean }) {
+function TaskRow({ task }: { task: Task }) {
   const update = useUpdateTask()
   const del = useDeleteTask()
+  const [editDate, setEditDate] = useState(false)
+  const today = todayISO()
 
   const prio = PRIORITIES.find((p) => p.value === task.priority) ?? PRIORITIES[1]
   const nextPrio: TaskPriority =
     task.priority === 'high' ? 'normal' : task.priority === 'normal' ? 'low' : 'high'
 
+  function setDue(due_date: string | null) {
+    buzz(BUZZ_TAP)
+    update.mutate({ id: task.id, due_date })
+    setEditDate(false)
+  }
+
+  const dateChips: { label: string; value: string | null }[] = [
+    { label: 'Dziś', value: today },
+    { label: 'Jutro', value: addDays(today, 1) },
+    { label: '+7 dni', value: addDays(task.due_date ?? today, 7) },
+    { label: 'Bez terminu', value: null },
+  ]
+
   return (
-    <div className="mb-1.5 flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5">
-      <button
-        onClick={() => {
-          buzz(task.done ? BUZZ_TAP : BUZZ_DONE)
-          update.mutate({ id: task.id, done: !task.done })
-        }}
-        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-          task.done ? 'border-rating-good bg-rating-good text-bg' : 'border-border'
-        }`}
-        aria-label={task.done ? 'Odznacz' : 'Zrobione'}
-      >
-        {task.done && '✓'}
-      </button>
-      <div className="min-w-0 flex-1">
-        <div className={`truncate text-sm ${task.done ? 'text-muted line-through' : ''}`}>
-          {task.title}
-        </div>
-        {showDate && task.due_date && (
-          <div className="text-[11px] text-muted">{formatDay(task.due_date)}</div>
-        )}
-      </div>
-      {!task.done && (
+    <div className="mb-1.5 rounded-xl border border-border bg-surface px-3 py-2.5">
+      <div className="flex items-center gap-3">
         <button
-          onClick={() => update.mutate({ id: task.id, priority: nextPrio })}
-          className="flex h-6 w-6 shrink-0 items-center justify-center"
-          title={`Priorytet: ${prio.label} (kliknij, by zmienić)`}
+          onClick={() => {
+            buzz(task.done ? BUZZ_TAP : BUZZ_DONE)
+            update.mutate({ id: task.id, done: !task.done })
+          }}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
+            task.done ? 'border-rating-good bg-rating-good text-bg' : 'border-border'
+          }`}
+          aria-label={task.done ? 'Odznacz' : 'Zrobione'}
         >
-          <span className={`h-2.5 w-2.5 rounded-full ${prio.dot}`} />
+          {task.done && '✓'}
         </button>
+        <span className={`min-w-0 flex-1 truncate text-sm ${task.done ? 'text-muted line-through' : ''}`}>
+          {task.title}
+        </span>
+        {task.done ? (
+          task.due_date && <span className="text-[11px] text-muted">{formatDay(task.due_date)}</span>
+        ) : (
+          <button
+            onClick={() => setEditDate((s) => !s)}
+            className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${
+              editDate ? 'border-rating-good/60 text-rating-good' : 'border-border text-muted'
+            }`}
+            title="Zmień termin"
+          >
+            {task.due_date ? formatDay(task.due_date) : '📅'}
+          </button>
+        )}
+        {!task.done && (
+          <button
+            onClick={() => update.mutate({ id: task.id, priority: nextPrio })}
+            className="flex h-6 w-6 shrink-0 items-center justify-center"
+            title={`Priorytet: ${prio.label} (kliknij, by zmienić)`}
+          >
+            <span className={`h-2.5 w-2.5 rounded-full ${prio.dot}`} />
+          </button>
+        )}
+        <button
+          onClick={() => del.mutate(task.id)}
+          className="text-xs text-muted hover:text-rating-bad"
+          title="Usuń"
+        >
+          ✕
+        </button>
+      </div>
+      {editDate && !task.done && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
+          {dateChips.map((c) => (
+            <button
+              key={c.label}
+              onClick={() => setDue(c.value)}
+              className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:border-rating-good/60 hover:text-rating-good"
+            >
+              {c.label}
+            </button>
+          ))}
+          <input
+            type="date"
+            value={task.due_date ?? ''}
+            onChange={(e) => setDue(e.target.value || null)}
+            className="rounded-lg border border-border bg-surface2 px-2 py-1 text-xs outline-none [color-scheme:dark]"
+          />
+        </div>
       )}
-      <button
-        onClick={() => del.mutate(task.id)}
-        className="text-xs text-muted hover:text-rating-bad"
-        title="Usuń"
-      >
-        ✕
-      </button>
     </div>
   )
 }
@@ -508,6 +550,17 @@ function ShoppingView() {
   )
 }
 
+/** "1200" / "49,99" → number | null */
+function parsePrice(s: string): number | null {
+  const n = parseFloat(s.replace(/\s/g, '').replace(',', '.'))
+  return Number.isNaN(n) || n < 0 ? null : n
+}
+
+const priceFmt = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 })
+function fmtPrice(n: number): string {
+  return `${priceFmt.format(n)} zł`
+}
+
 function ShoppingList({
   term,
   title,
@@ -522,20 +575,37 @@ function ShoppingList({
   const add = useAddShoppingItem()
   const clear = useClearBoughtShopping()
   const [name, setName] = useState('')
+  const [price, setPrice] = useState('')
 
   const open = items.filter((i) => !i.done)
   const bought = items.filter((i) => i.done)
+  const total = open.reduce((sum, i) => sum + (i.price ?? 0), 0)
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
     buzz(BUZZ_TAP)
-    add.mutate({ name, term }, { onSuccess: () => setName('') })
+    add.mutate(
+      { name, term, price: parsePrice(price) },
+      {
+        onSuccess: () => {
+          setName('')
+          setPrice('')
+        },
+      }
+    )
   }
 
   return (
     <div className="rounded-2xl border border-border bg-surface p-3">
-      <div className="mb-0.5 font-semibold">{title}</div>
+      <div className="flex items-baseline justify-between">
+        <span className="font-semibold">{title}</span>
+        {total > 0 && (
+          <span className="text-xs font-semibold tabular-nums text-rating-mid">
+            razem {fmtPrice(total)}
+          </span>
+        )}
+      </div>
       <div className="mb-3 text-[11px] text-muted">{hint}</div>
 
       <form onSubmit={submit} className="mb-3 flex gap-2">
@@ -544,6 +614,13 @@ function ShoppingList({
           onChange={(e) => setName(e.target.value)}
           placeholder="Dodaj do listy…"
           className="min-w-0 flex-1 rounded-xl border border-border bg-surface2 px-3 py-2 text-sm outline-none focus:border-rating-good"
+        />
+        <input
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          inputMode="decimal"
+          placeholder="zł"
+          className="w-16 rounded-xl border border-border bg-surface2 px-2 py-2 text-right text-sm outline-none focus:border-rating-good"
         />
         <button
           type="submit"
@@ -584,6 +661,13 @@ function ShoppingList({
 function ShoppingRow({ item }: { item: ShoppingItem }) {
   const update = useUpdateShoppingItem()
   const del = useDeleteShoppingItem()
+  const [editPrice, setEditPrice] = useState(false)
+
+  function savePrice(raw: string) {
+    const p = parsePrice(raw)
+    if (p !== item.price) update.mutate({ id: item.id, price: p })
+    setEditPrice(false)
+  }
 
   return (
     <div className="mb-1.5 flex items-center gap-3 rounded-xl border border-border bg-surface2 px-3 py-2">
@@ -602,6 +686,29 @@ function ShoppingRow({ item }: { item: ShoppingItem }) {
       <span className={`min-w-0 flex-1 truncate text-sm ${item.done ? 'text-muted line-through' : ''}`}>
         {item.name}
       </span>
+      {editPrice ? (
+        <input
+          autoFocus
+          inputMode="decimal"
+          defaultValue={item.price ?? ''}
+          onBlur={(e) => savePrice(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') savePrice((e.target as HTMLInputElement).value)
+            if (e.key === 'Escape') setEditPrice(false)
+          }}
+          className="w-16 rounded-lg border border-border bg-surface px-2 py-1 text-right text-xs outline-none focus:border-rating-good"
+        />
+      ) : (
+        <button
+          onClick={() => setEditPrice(true)}
+          className={`shrink-0 text-xs tabular-nums ${
+            item.price != null ? (item.done ? 'text-muted' : 'text-rating-mid') : 'text-muted/60'
+          }`}
+          title="Ustaw cenę"
+        >
+          {item.price != null ? fmtPrice(item.price) : '+ zł'}
+        </button>
+      )}
       <button
         onClick={() => update.mutate({ id: item.id, term: item.term === 'short' ? 'long' : 'short' })}
         className="text-xs text-muted"
