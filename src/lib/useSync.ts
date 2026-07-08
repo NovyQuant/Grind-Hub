@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useHabits, useLogs, useRecords, saveRecords } from './queries'
+import { useAbstinences, useHabits, useLogs, useRecords, saveRecords } from './queries'
 import { computeProgress } from './progress'
 import { computeRank } from './rank'
 import {
@@ -30,6 +30,7 @@ function reachedMilestone(milestones: number[], value: number): number {
 export function useSync() {
   const habits = useHabits()
   const logs = useLogs()
+  const abstinences = useAbstinences()
   const records = useRecords()
   const qc = useQueryClient()
   const toast = useToast()
@@ -38,12 +39,15 @@ export function useSync() {
 
   useEffect(() => {
     if (!habits.data || !logs.data || !records.data) return
-    const hash = `${todayISO()}:${logs.data.map((l) => `${l.habit_id}${l.log_date}${l.value}`).join(',')}`
+    const abst = abstinences.data ?? []
+    const hash = `${todayISO()}:${logs.data.map((l) => `${l.habit_id}${l.log_date}${l.value}`).join(',')}:${abst
+      .map((a) => `${a.id}${a.started_on}`)
+      .join(',')}`
     if (hash === lastHashRef.current) return
     lastHashRef.current = hash
 
     const p = computeProgress(habits.data, logs.data)
-    const rank = computeRank(habits.data, logs.data)
+    const rank = computeRank(habits.data, logs.data, abst)
     const today = todayISO()
 
     const fresh: RecordRow[] = [
@@ -107,5 +111,5 @@ export function useSync() {
         .then(() => qc.invalidateQueries({ queryKey: ['records'] }))
         .catch((e) => console.error('saveRecords:', e))
     }
-  }, [habits.data, logs.data, records.data, qc, toast])
+  }, [habits.data, logs.data, abstinences.data, records.data, qc, toast])
 }

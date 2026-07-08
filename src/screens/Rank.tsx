@@ -1,15 +1,16 @@
 import { useMemo } from 'react'
-import { useHabits, useLogs } from '../lib/queries'
+import { useAbstinences, useHabits, useLogs } from '../lib/queries'
 import { computeRank, RANK_TIERS } from '../lib/rank'
 import { AREAS, AREA_ICONS, AREA_LABELS } from '../lib/types'
 
 export default function Rank() {
   const habits = useHabits()
   const logs = useLogs()
+  const abstinences = useAbstinences()
 
   const r = useMemo(
-    () => computeRank(habits.data ?? [], logs.data ?? []),
-    [habits.data, logs.data]
+    () => computeRank(habits.data ?? [], logs.data ?? [], abstinences.data ?? []),
+    [habits.data, logs.data, abstinences.data]
   )
 
   if (habits.isLoading || logs.isLoading)
@@ -81,8 +82,8 @@ export default function Rank() {
       <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
         <div className="flex flex-col gap-2">
           {AREAS.map((area) => {
-            const { xp, max } = r.perAreaToday[area]
-            const w = max > 0 ? (Math.abs(xp) / max) * 100 : 0
+            const { xp, max, mult } = r.perAreaToday[area]
+            const w = max > 0 ? Math.min(100, (Math.abs(xp) / max) * 100) : 0
             return (
               <div key={area} className="flex items-center gap-2">
                 <span className="w-6 text-center">{AREA_ICONS[area]}</span>
@@ -93,6 +94,11 @@ export default function Rank() {
                     style={{ width: `${w}%` }}
                   />
                 </div>
+                {mult > 1 && (
+                  <span className="rounded-full bg-[#a855f7]/15 px-1.5 py-0.5 text-[9px] font-black text-[#c084fc]">
+                    ×{mult.toFixed(2).replace(/0$/, '')}
+                  </span>
+                )}
                 <span
                   className={`w-16 text-right text-[11px] tabular-nums ${
                     xp < 0 ? 'text-rating-bad' : xp > 0 ? 'text-rating-good' : 'text-muted'
@@ -103,11 +109,22 @@ export default function Rank() {
               </div>
             )
           })}
+          {r.abstinenceToday > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="w-6 text-center">🚭</span>
+              <span className="w-20 text-xs font-medium">Nałogi</span>
+              <div className="flex-1" />
+              <span className="w-16 text-right text-[11px] tabular-nums text-rating-good">
+                +{r.abstinenceToday}
+              </span>
+            </div>
+          )}
         </div>
         <p className="mt-3 text-[11px] text-muted">
-          Super = +XP, okej = 0, słabo = −XP (wg wagi obszaru). Sen: 7–8h = +XP, 6:30–7 i
-          8–8:30 = 0, poza = −XP. Trening i projekt liczą się z okna tygodnia — trzymaj tempo,
-          a punkty lecą codziennie.
+          Super = +XP, okej = połowa +XP, słabo = −XP (wg wagi obszaru). Sen: 7–8h = pełne XP,
+          6:30–7 i 8–8:30 = połowa, poza = −XP. Trening i projekt liczą się z okna tygodnia.
+          Seria dni na plusie w obszarze daje mnożnik +5%/dzień (maks ×2) — tylko do plusów.
+          Nałogi: +2 XP za każdy czysty dzień, rośnie z serią; wpadka kasuje XP serii.
         </p>
       </div>
 

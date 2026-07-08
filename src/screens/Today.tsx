@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { useHabits, useLogs, useUpsertLog, useDeleteLog } from '../lib/queries'
+import { useAbstinences, useHabits, useLogs, useUpsertLog, useDeleteLog } from '../lib/queries'
 import { Habit, Log, SCALE3, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
-import { todayISO } from '../lib/date'
+import { diffDays, todayISO } from '../lib/date'
 import { computeProgress } from '../lib/progress'
-import { computeRank } from '../lib/rank'
+import { abstinenceDayXP, computeRank, habitBaseXP, XP_PER_WEIGHT } from '../lib/rank'
+import { makeLookup, ValueLookup } from '../lib/ratings'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 
 /** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania). */
@@ -22,20 +23,23 @@ export default function Today() {
   const [date, setDate] = useState(todayISO())
   const habits = useHabits()
   const logs = useLogs()
+  const abstinences = useAbstinences()
   const upsert = useUpsertLog()
   const isToday = date === todayISO()
 
   const active = (habits.data ?? []).filter((h) => h.active)
   const logsList = logs.data ?? []
+  const abstList = abstinences.data ?? []
 
   const progress = useMemo(
     () => computeProgress(habits.data ?? [], logsList),
     [habits.data, logsList]
   )
   const rank = useMemo(
-    () => computeRank(habits.data ?? [], logsList),
-    [habits.data, logsList]
+    () => computeRank(habits.data ?? [], logsList, abstList),
+    [habits.data, logsList, abstList]
   )
+  const lookup = useMemo(() => makeLookup(logsList), [logsList])
 
   if (habits.isLoading || logs.isLoading)
     return <div className="p-6 text-muted">Ładowanie…</div>
@@ -166,6 +170,35 @@ export default function Today() {
         })}
       </div>
 
+      {/* Nałogi — dni na czysto + XP za serię */}
+      {abstList.length > 0 && (
+        <NavLink to="/nalogi" className="mb-4 block rounded-2xl border border-border bg-surface p-3">
+          <div className="mb-1.5 flex items-baseline justify-between">
+            <span className="text-xs uppercase tracking-wide text-muted">🚭 Nałogi</span>
+            <span className="text-[11px] font-bold text-rating-good">
+              +{rank.abstinenceToday} XP dziś
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {abstList.map((a) => {
+              const days = Math.max(0, diffDays(todayISO(), a.started_on))
+              return (
+                <span
+                  key={a.id}
+                  className="flex items-center gap-1.5 rounded-full bg-surface2 px-3 py-1.5 text-xs font-semibold"
+                >
+                  {a.name}
+                  <span className="font-black tabular-nums">🔥 {days}</span>
+                  <span className="text-[10px] font-bold text-rating-good">
+                    +{abstinenceDayXP(days)}/d
+                  </span>
+                </span>
+              )
+            })}
+          </div>
+        </NavLink>
+      )}
+
       {/* Date picker (kompaktowy) */}
       <div className="mb-3 flex items-center justify-between rounded-xl border border-border bg-surface px-4 py-2.5 text-sm">
         <span className="text-muted">{isToday ? 'Dzisiaj' : 'Wpis wsteczny'}</span>
@@ -181,8 +214,61 @@ export default function Today() {
       {/* Szybki flow */}
       <div className="flex flex-col gap-3">
         {active.map((h) => (
-          <HabitRow key={h.id} habit={h} date={date} logs={logsList} />
+          <HabitRow key={h.id} habit={h} date={date} logs={logsList} lookup={lookup} isToday={isToday} />
         ))}
+      </div>
+
+      {/* Podsumowanie dnia */}
+      <div className="mt-4 rounded-2xl border border-border bg-surface p-4">
+        <div className="mb-2 flex items-baseline justify-between">
+          <span className="text-xs uppercase tracking-wide text-muted">Bilans dnia</span>
+          <span
+            className={`text-xl font-black tabular-nums ${
+              rank.todayXP < 0 ? 'text-rating-bad' : 'text-rating-good'
+            }`}
+          >
+            {rank.todayXP >= 0 ? '+' : ''}{rank.todayXP} XP
+          </span>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {AREAS.map((area) => {
+            const t = rank.perAreaToday[area]
+            if (!t || t.max === 0) return null
+            return (
+              <div key={area} className="flex items-center gap-2 text-sm">
+                <span className="w-6 text-center">{AREA_ICONS[area]}</span>
+                <span className="flex-1 text-xs font-medium">{AREA_LABELS[area]}</span>
+                {t.mult > 1 && (
+                  <span className="rounded-full bg-[#a855f7]/15 px-2 py-0.5 text-[10px] font-black text-[#c084fc]">
+                    ×{t.mult.toFixed(2).replace(/0$/, '')}
+                  </span>
+                )}
+                <span
+                  className={`w-14 text-right text-sm font-bold tabular-nums ${
+                    t.xp < 0 ? 'text-rating-bad' : t.xp > 0 ? 'text-rating-good' : 'text-muted'
+                  }`}
+                >
+                  {t.xp >= 0 ? '+' : ''}{t.xp}
+                </span>
+              </div>
+            )
+          })}
+          {rank.abstinenceToday > 0 && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="w-6 text-center">🚭</span>
+              <span className="flex-1 text-xs font-medium">Nałogi</span>
+              <span className="w-14 text-right text-sm font-bold tabular-nums text-rating-good">
+                +{rank.abstinenceToday}
+              </span>
+            </div>
+          )}
+        </div>
+        {rank.nextLabel && (
+          <div className="mt-3 border-t border-border pt-2.5 text-center text-sm font-semibold">
+            Brakuje <span style={{ color: rank.tier.color }}>{rank.toNext} XP</span> do{' '}
+            {rank.nextLabel}
+          </div>
+        )}
       </div>
 
       {isToday && (
@@ -204,18 +290,58 @@ function currentLog(logs: Log[], habitId: string, date: string): Log | undefined
   return logs.find((l) => l.habit_id === habitId && l.log_date === date)
 }
 
-function HabitRow({ habit, date, logs }: { habit: Habit; date: string; logs: Log[] }) {
+/** Badge XP nawyku: od razu widać, czy wpis daje, czy zabiera punkty. */
+function XPBadge({ xp, full }: { xp: number | null; full: number }) {
+  if (xp === null)
+    return (
+      <span className="rounded-full bg-surface2 px-2 py-0.5 text-[10px] font-bold text-muted">
+        ±{full} XP
+      </span>
+    )
+  const cls =
+    xp < 0
+      ? 'bg-rating-bad/15 text-rating-bad'
+      : xp >= full
+        ? 'bg-rating-good/15 text-rating-good'
+        : xp > 0
+          ? 'bg-rating-mid/15 text-rating-mid'
+          : 'bg-surface2 text-muted'
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black tabular-nums ${cls}`}>
+      {xp >= 0 ? '+' : ''}{xp} XP
+    </span>
+  )
+}
+
+function HabitRow({
+  habit,
+  date,
+  logs,
+  lookup,
+  isToday,
+}: {
+  habit: Habit
+  date: string
+  logs: Log[]
+  lookup: ValueLookup
+  isToday: boolean
+}) {
   const log = currentLog(logs, habit.id, date)
+  const xp = habitBaseXP(habit, date, lookup, isToday)
+  const full = Math.round((habit.weight ?? 1) * XP_PER_WEIGHT)
   return (
     <div className="rounded-2xl border border-border bg-surface p-4">
       <div className="mb-3 flex items-center gap-2">
         <span className="text-lg">{AREA_ICONS[habit.area as Area]}</span>
         <span className="font-semibold">{habit.name}</span>
-        {habit.cadence === 'weekly' && (
-          <span className="ml-auto rounded-full bg-surface2 px-2 py-0.5 text-[10px] text-muted">
-            cel {habit.weekly_target}/tydz
-          </span>
-        )}
+        <span className="ml-auto flex items-center gap-1.5">
+          {habit.cadence === 'weekly' && (
+            <span className="rounded-full bg-surface2 px-2 py-0.5 text-[10px] text-muted">
+              cel {habit.weekly_target}/tydz
+            </span>
+          )}
+          <XPBadge xp={xp} full={full} />
+        </span>
       </div>
       {habit.input_kind === 'scale3' && <Scale3Input habit={habit} date={date} log={log} />}
       {habit.input_kind === 'check' && <CheckInput habit={habit} date={date} log={log} />}

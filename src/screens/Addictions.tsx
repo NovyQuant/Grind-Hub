@@ -8,6 +8,7 @@ import {
 } from '../lib/queries'
 import { Abstinence } from '../lib/types'
 import { diffDays, todayISO } from '../lib/date'
+import { abstinenceDayXP } from '../lib/rank'
 import { buzz, BUZZ_TAP } from '../lib/haptics'
 
 export default function Addictions() {
@@ -85,6 +86,11 @@ function Card({ a }: { a: Abstinence }) {
       <div className="my-3 text-center">
         <div className="text-5xl font-black tabular-nums text-rating-good">{days}</div>
         <div className="text-xs text-muted">dni na czysto</div>
+        {days > 0 && (
+          <div className="mt-1 text-[11px] font-bold text-rating-good">
+            +{abstinenceDayXP(days)} XP/dzień — rośnie z serią
+          </div>
+        )}
       </div>
 
       {edit ? (
