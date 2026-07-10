@@ -40,7 +40,7 @@ export function habitDailyF(habit: Habit, date: string, getValue: ValueLookup): 
   const v = getValue(habit.id, date)
 
   if (habit.input_kind === 'check') return v !== undefined && v >= 1 ? 1 : 0
-  if (habit.input_kind === 'scale3' || habit.input_kind === 'scale4')
+  if (habit.input_kind === 'scale2' || habit.input_kind === 'scale3' || habit.input_kind === 'scale4')
     return v === undefined ? 0 : clamp01(v)
 
   // number

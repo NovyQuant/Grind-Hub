@@ -129,6 +129,7 @@ export interface RankState {
  * (Nawyki weekly rozliczane osobno: sesje + bonus za cel tygodnia.)
  *
  * - check: zrobione = +1, brak = −1
+ * - scale2 (kosmetyki, samoocena): dobrze = +1, źle/brak = −1
  * - scale3: super = +1, okej = +0.5, słabo/brak = −1
  * - scale4 (wydatki, samoocena): dobrze = +1, okej = +0.5, źle = −1,
  *   bardzo źle = −2 (podwójna kara)
@@ -146,7 +147,7 @@ export function habitXPSign(
   const v = getValue(habit.id, date)
   if (v === undefined) return pending ? 0 : -1
 
-  if (habit.input_kind === 'check') return v >= 1 ? 1 : -1
+  if (habit.input_kind === 'check' || habit.input_kind === 'scale2') return v >= 1 ? 1 : -1
   if (habit.input_kind === 'scale3') {
     if (v >= 1) return 1
     if (v >= 0.5) return OK_XP_SIGN

@@ -22,7 +22,7 @@ export const AREA_ICONS: Record<Area, string> = {
   rozwoj: '🚀',
 }
 
-export type InputKind = 'check' | 'scale3' | 'scale4' | 'number'
+export type InputKind = 'check' | 'scale2' | 'scale3' | 'scale4' | 'number'
 export type Cadence = 'daily' | 'weekly'
 export type ScoreMode = 'at_least' | 'at_most' | 'range'
 
@@ -113,6 +113,12 @@ export const SCALE3 = [
   { value: 0, label: 'słabo', short: '😕' },
   { value: 0.5, label: 'okej', short: '😐' },
   { value: 1, label: 'super', short: '🔥' },
+] as const
+
+// scale2 — samoocena tak/nie (kosmetyki): źle = −XP od razu, dobrze = +XP
+export const SCALE2 = [
+  { value: 0, label: 'źle', short: '😕' },
+  { value: 1, label: 'dobrze', short: '🔥' },
 ] as const
 
 // scale4 — samoocena wydatków: wartość = f dnia (0.8 = okej trzyma streak)

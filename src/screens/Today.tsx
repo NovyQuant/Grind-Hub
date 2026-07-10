@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAbstinences, useHabits, useLogs, useUpsertLog, useDeleteLog } from '../lib/queries'
-import { Habit, Log, SCALE3, SCALE4, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
+import { Habit, Log, SCALE2, SCALE3, SCALE4, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
 import { todayISO } from '../lib/date'
 import { computeProgress } from '../lib/progress'
 import {
@@ -267,6 +267,7 @@ function HabitRow({
           <XPBadge xp={xp} full={full} weekly={weekly} />
         </span>
       </div>
+      {habit.input_kind === 'scale2' && <Scale2Input habit={habit} date={date} log={log} />}
       {habit.input_kind === 'scale3' && <Scale3Input habit={habit} date={date} log={log} />}
       {habit.input_kind === 'scale4' && <Scale4Input habit={habit} date={date} log={log} />}
       {habit.input_kind === 'check' && <CheckInput habit={habit} date={date} log={log} />}
@@ -298,6 +299,39 @@ function Scale3Input({ habit, date, log }: { habit: Habit; date: string; log?: L
             className={`rounded-xl border py-3 text-sm font-semibold transition-colors ${
               sel
                 ? 'border-rating-good bg-rating-good/15 text-rating-good'
+                : 'border-border bg-surface2 text-muted active:bg-border'
+            }`}
+          >
+            <div className="text-xl">{s.short}</div>
+            {s.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Samoocena tak/nie (kosmetyki): źle = od razu −XP, dobrze = +XP. */
+function Scale2Input({ habit, date, log }: { habit: Habit; date: string; log?: Log }) {
+  const upsert = useUpsertLog()
+  const del = useDeleteLog()
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {SCALE2.map((s) => {
+        const sel = log && log.value === s.value
+        return (
+          <button
+            key={s.value}
+            onClick={() => {
+              buzz(BUZZ_TAP)
+              if (sel) del.mutate({ habit_id: habit.id, log_date: date })
+              else upsert.mutate({ habit_id: habit.id, log_date: date, value: s.value })
+            }}
+            className={`rounded-xl border py-3 text-sm font-semibold transition-colors ${
+              sel
+                ? s.value >= 1
+                  ? 'border-rating-good bg-rating-good/15 text-rating-good'
+                  : 'border-rating-bad bg-rating-bad/15 text-rating-bad'
                 : 'border-border bg-surface2 text-muted active:bg-border'
             }`}
           >

@@ -19,7 +19,7 @@ create table habits (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   area text not null,
-  input_kind text not null,          -- 'check' | 'scale3' | 'scale4' | 'number'
+  input_kind text not null,          -- 'check' | 'scale2' | 'scale3' | 'scale4' | 'number'
   cadence text not null default 'daily', -- 'daily' | 'weekly'
   score_mode text,                   -- (number) 'at_least' | 'at_most' | 'range'
   daily_target numeric,              -- próg / dolna granica pasma / strefa wolna
@@ -128,4 +128,4 @@ values
   ('Projekt',    'rozwoj',    'scale3', 'weekly', null,      null, null, null, 2,    null,             2,   3),
   ('Dieta',      'dieta',     'scale3', 'daily',  null,      null, null, null, null, null,             1,   4),
   ('Wydatki',    'finanse',   'scale4', 'daily',  null,      null, null, null, null, null,             0.5, 5),
-  ('Kosmetyki',  'kosmetyki', 'check',  'daily',  null,      null, null, null, null, null,             0.5, 6);
+  ('Kosmetyki',  'kosmetyki', 'scale2', 'daily',  null,      null, null, null, null, null,             0.5, 6);
