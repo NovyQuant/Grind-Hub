@@ -18,24 +18,11 @@ import StreakTile from '../components/StreakTile'
 import AbstinencePanel from '../components/AbstinencePanel'
 import { useToast } from '../components/Toast'
 
-/** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania).
- *  Odhacz (np. kosmetyki) celowo bez domyślnej: brak kliknięcia = nie zrobione. */
-function defaultValue(h: Habit): number | null {
-  if (h.input_kind === 'scale4') return 1 // wydatki: domyślnie „dobrze"
-  if (h.input_kind === 'number') {
-    if (h.score_mode === 'at_most') return 0
-    if (h.score_mode === 'range') return h.daily_target ?? 7
-    if (h.score_mode === 'at_least') return h.daily_target ?? 1
-  }
-  return null
-}
-
 export default function Today() {
   const [date, setDate] = useState(todayISO())
   const habits = useHabits()
   const logs = useLogs()
   const abstinences = useAbstinences()
-  const upsert = useUpsertLog()
   const toast = useToast()
   const isToday = date === todayISO()
 
@@ -56,22 +43,19 @@ export default function Today() {
   if (habits.isLoading || logs.isLoading)
     return <div className="p-6 text-muted">Ładowanie…</div>
 
+  /** Tylko podsumowanie — niczego nie dopisuje; brak wpisu = kara przy zamknięciu dnia. */
   function closeDay() {
-    const filled: string[] = []
-    for (const h of active) {
-      const has = logsList.some((l) => l.habit_id === h.id && l.log_date === date)
-      if (has) continue
-      const dv = defaultValue(h)
-      if (dv != null) {
-        upsert.mutate({ habit_id: h.id, log_date: date, value: dv })
-        filled.push(h.name)
-      }
-    }
+    const missing = active.filter(
+      (h) =>
+        h.cadence === 'daily' && !logsList.some((l) => l.habit_id === h.id && l.log_date === date)
+    )
     buzz(BUZZ_DONE)
     toast(
-      filled.length > 0
-        ? `✅ Dzień domknięty — uzupełniono: ${filled.join(', ')}`
-        : `✅ Dzień domknięty — wszystko już było wpisane (${rank.todayXP >= 0 ? '+' : ''}${rank.todayXP} XP dziś)`
+      missing.length > 0
+        ? `📋 Bilans: ${rank.todayXP >= 0 ? '+' : ''}${rank.todayXP} XP · brak wpisu: ${missing
+            .map((h) => h.name)
+            .join(', ')}`
+        : `✅ Wszystko wpisane — bilans dziś: ${rank.todayXP >= 0 ? '+' : ''}${rank.todayXP} XP`
     )
   }
 
@@ -213,12 +197,12 @@ export default function Today() {
           onClick={closeDay}
           className="mt-4 w-full rounded-2xl bg-rating-good py-3.5 text-base font-bold text-bg active:scale-[0.99]"
         >
-          Zamknij dzień
+          Podsumuj dzień
         </button>
       )}
       <p className="mt-2 text-center text-[11px] text-muted">
-        „Zamknij dzień" uzupełnia domyślne (sen 7h, wydatki dobrze) dla niewpisanych. Odhaczane
-        (kosmetyki, trening) zostają puste — brak kliknięcia = nie zrobione.
+        Przycisk niczego nie dopisuje — pokazuje bilans i czego brakuje. Brak wpisu po
+        zamknięciu dnia liczy się jako minus.
       </p>
     </div>
   )
