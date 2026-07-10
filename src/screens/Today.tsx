@@ -16,14 +16,14 @@ import { makeLookup, ValueLookup } from '../lib/ratings'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 import StreakTile from '../components/StreakTile'
 import AbstinencePanel from '../components/AbstinencePanel'
-import { useToast } from '../components/Toast'
+import DaySummary from '../components/DaySummary'
 
 export default function Today() {
   const [date, setDate] = useState(todayISO())
   const habits = useHabits()
   const logs = useLogs()
   const abstinences = useAbstinences()
-  const toast = useToast()
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const isToday = date === todayISO()
 
   const active = (habits.data ?? []).filter((h) => h.active)
@@ -45,18 +45,8 @@ export default function Today() {
 
   /** Tylko podsumowanie — niczego nie dopisuje; brak wpisu = kara przy zamknięciu dnia. */
   function closeDay() {
-    const missing = active.filter(
-      (h) =>
-        h.cadence === 'daily' && !logsList.some((l) => l.habit_id === h.id && l.log_date === date)
-    )
     buzz(BUZZ_DONE)
-    toast(
-      missing.length > 0
-        ? `📋 Bilans: ${rank.todayXP >= 0 ? '+' : ''}${rank.todayXP} XP · brak wpisu: ${missing
-            .map((h) => h.name)
-            .join(', ')}`
-        : `✅ Wszystko wpisane — bilans dziś: ${rank.todayXP >= 0 ? '+' : ''}${rank.todayXP} XP`
-    )
+    setSummaryOpen(true)
   }
 
   return (
@@ -204,6 +194,15 @@ export default function Today() {
         Przycisk niczego nie dopisuje — pokazuje bilans i czego brakuje. Brak wpisu po
         zamknięciu dnia liczy się jako minus.
       </p>
+
+      {summaryOpen && (
+        <DaySummary
+          habits={habits.data ?? []}
+          logs={logsList}
+          abstinences={abstList}
+          onClose={() => setSummaryOpen(false)}
+        />
+      )}
     </div>
   )
 }
