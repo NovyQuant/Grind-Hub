@@ -17,9 +17,9 @@ import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 import StreakTile from '../components/StreakTile'
 import AbstinencePanel from '../components/AbstinencePanel'
 
-/** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania). */
+/** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania).
+ *  Odhacz (np. kosmetyki) celowo bez domyślnej: brak kliknięcia = nie zrobione. */
 function defaultValue(h: Habit): number | null {
-  if (h.input_kind === 'check' && !h.subtypes) return 1
   if (h.input_kind === 'scale4') return 1 // wydatki: domyślnie „dobrze"
   if (h.input_kind === 'number') {
     if (h.score_mode === 'at_most') return 0
@@ -206,7 +206,8 @@ export default function Today() {
         </button>
       )}
       <p className="mt-2 text-center text-[11px] text-muted">
-        „Zamknij dzień" uzupełnia domyślne (sen 7h, wydatki dobrze, kosmetyki ✓) dla niewpisanych.
+        „Zamknij dzień" uzupełnia domyślne (sen 7h, wydatki dobrze) dla niewpisanych. Odhaczane
+        (kosmetyki, trening) zostają puste — brak kliknięcia = nie zrobione.
       </p>
     </div>
   )
