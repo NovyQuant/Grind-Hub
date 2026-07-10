@@ -122,7 +122,8 @@ export default function Rank() {
         </div>
         <p className="mt-3 text-[11px] text-muted">
           Super = +XP, okej = połowa +XP, słabo = −XP (wg wagi obszaru). Sen: 7–8h = pełne XP,
-          6:30–7 i 8–8:30 = połowa, poza = −XP. Trening i projekt liczą się z okna tygodnia.
+          6:30–7 i 8–8:30 = połowa, poza = −XP. Wydatki (samoocena): dobrze = +XP, okej = połowa,
+          źle = −XP, bardzo źle = −2×XP. Trening i projekt liczą się z okna tygodnia.
           Seria dni na plusie w obszarze daje mnożnik +5%/dzień (maks ×2) — tylko do plusów.
           Nałogi: +2 XP za każdy czysty dzień, rośnie z serią; wpadka kasuje XP serii.
         </p>

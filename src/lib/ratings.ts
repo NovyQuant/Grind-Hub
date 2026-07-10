@@ -18,6 +18,7 @@ function clamp01(x: number): number {
  * Kadencja 'daily':
  *   - check:  1 gdy zrobione, inaczej 0
  *   - scale3: wartość 0/0.5/1 (brak wpisu = 0)
+ *   - scale4 (wydatki): samoocena 0/0.4/0.8/1 (brak wpisu = 0)
  *   - number range (sen): pasmo [low,high] = 1, poza pasmem spada o falloff/jednostkę
  *   - number at_most (głupoty): ≤ strefa wolna = 1, dalej spada o 1/falloff
  *   - number at_least: ≥ target = 1, inaczej value/target
@@ -39,7 +40,8 @@ export function habitDailyF(habit: Habit, date: string, getValue: ValueLookup): 
   const v = getValue(habit.id, date)
 
   if (habit.input_kind === 'check') return v !== undefined && v >= 1 ? 1 : 0
-  if (habit.input_kind === 'scale3') return v === undefined ? 0 : clamp01(v)
+  if (habit.input_kind === 'scale3' || habit.input_kind === 'scale4')
+    return v === undefined ? 0 : clamp01(v)
 
   // number
   if (v === undefined) return 0

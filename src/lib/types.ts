@@ -19,7 +19,7 @@ export const AREA_ICONS: Record<Area, string> = {
   rozwoj: '🚀',
 }
 
-export type InputKind = 'check' | 'scale3' | 'number'
+export type InputKind = 'check' | 'scale3' | 'scale4' | 'number'
 export type Cadence = 'daily' | 'weekly'
 export type ScoreMode = 'at_least' | 'at_most' | 'range'
 
@@ -110,6 +110,14 @@ export const SCALE3 = [
   { value: 0, label: 'słabo', short: '😕' },
   { value: 0.5, label: 'okej', short: '😐' },
   { value: 1, label: 'super', short: '🔥' },
+] as const
+
+// scale4 — samoocena wydatków: wartość = f dnia (0.8 = okej trzyma streak)
+export const SCALE4 = [
+  { value: 0, label: 'bardzo źle', short: '💀' },
+  { value: 0.4, label: 'źle', short: '😕' },
+  { value: 0.8, label: 'okej', short: '😐' },
+  { value: 1, label: 'dobrze', short: '🔥' },
 ] as const
 
 // Streak / poziomy — streaki liczone PER OBSZAR (bez globalnego podsumowania).

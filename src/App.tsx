@@ -8,7 +8,6 @@ import Today from './screens/Today'
 import Planner from './screens/Planner'
 import Levels from './screens/Levels'
 import Rank from './screens/Rank'
-import Addictions from './screens/Addictions'
 import Settings from './screens/Settings'
 
 function ConfigError() {
@@ -29,7 +28,6 @@ const TABS = [
   { to: '/plan', label: 'Plan', icon: '📅', end: false },
   { to: '/poziomy', label: 'Poziomy', icon: '🎮', end: false },
   { to: '/ranga', label: 'Ranga', icon: '🏆', end: false },
-  { to: '/nalogi', label: 'Nałogi', icon: '🚭', end: false },
   { to: '/ustawienia', label: 'Więcej', icon: '⚙️', end: false },
 ]
 
@@ -112,7 +110,7 @@ function AuthedApp() {
             <Route path="/poziomy" element={<Levels />} />
             <Route path="/ranga" element={<Rank />} />
             <Route path="/stats" element={<Navigate to="/ranga" replace />} />
-            <Route path="/nalogi" element={<Addictions />} />
+            <Route path="/nalogi" element={<Navigate to="/" replace />} />
             <Route path="/ustawienia" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -1,16 +1,19 @@
 import { useMemo, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAbstinences, useHabits, useLogs, useUpsertLog, useDeleteLog } from '../lib/queries'
-import { Habit, Log, SCALE3, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
-import { diffDays, todayISO } from '../lib/date'
+import { Habit, Log, SCALE3, SCALE4, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
+import { todayISO } from '../lib/date'
 import { computeProgress } from '../lib/progress'
-import { abstinenceDayXP, computeRank, habitBaseXP, XP_PER_WEIGHT } from '../lib/rank'
+import { computeRank, habitBaseXP, XP_PER_WEIGHT } from '../lib/rank'
 import { makeLookup, ValueLookup } from '../lib/ratings'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
+import StreakTile from '../components/StreakTile'
+import AbstinencePanel from '../components/AbstinencePanel'
 
 /** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania). */
 function defaultValue(h: Habit): number | null {
   if (h.input_kind === 'check' && !h.subtypes) return 1
+  if (h.input_kind === 'scale4') return 1 // wydatki: domyślnie „dobrze"
   if (h.input_kind === 'number') {
     if (h.score_mode === 'at_most') return 0
     if (h.score_mode === 'range') return h.daily_target ?? 7
@@ -94,110 +97,15 @@ export default function Today() {
         </div>
       </NavLink>
 
-      {/* Streaki tygodniowe — cele tygodnia (wyróżnione) */}
-      <div className="mb-2 flex flex-col gap-2">
-        {AREAS.filter((a) => progress.streaks[a].unit === 'week').map((area) => {
-          const s = progress.streaks[area]
-          const done = s.periodDone
-          const pct = s.weekTarget > 0 ? Math.min(100, (s.weekAcc / s.weekTarget) * 100) : 0
-          return (
-            <div
-              key={area}
-              className={`rounded-2xl border p-3.5 ${
-                done
-                  ? 'border-rating-good/60 bg-rating-good/10'
-                  : 'border-[#a855f7]/50 bg-[#a855f7]/5'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-xl">{AREA_ICONS[area]}</span>
-                <span className="font-bold">{AREA_LABELS[area]}</span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${
-                    done ? 'bg-rating-good/20 text-rating-good' : 'bg-[#a855f7]/20 text-[#c084fc]'
-                  }`}
-                >
-                  cel tygodnia
-                </span>
-                <span className="ml-auto text-xl font-black tabular-nums">
-                  🔥 {s.current}
-                  <span className="ml-1 text-xs font-medium text-muted">tyg</span>
-                </span>
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface">
-                  <div
-                    className={`h-full rounded-full transition-all ${done ? 'bg-rating-good' : 'bg-[#a855f7]'}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span
-                  className={`text-sm font-bold tabular-nums ${done ? 'text-rating-good' : 'text-[#c084fc]'}`}
-                >
-                  {done ? '✓ zaliczony' : `${s.weekAcc}/${s.weekTarget}`}
-                </span>
-              </div>
-            </div>
-          )
-        })}
+      {/* Streaki per obszar — jeden format dla dziennych i tygodniowych */}
+      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3">
+        {AREAS.map((area) => (
+          <StreakTile key={area} area={area} s={progress.streaks[area]} />
+        ))}
       </div>
 
-      {/* Streaki dzienne */}
-      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-        {AREAS.filter((a) => progress.streaks[a].unit === 'day').map((area) => {
-          const s = progress.streaks[area]
-          const done = s.periodDone
-          return (
-            <div
-              key={area}
-              className={`rounded-2xl border p-3 ${
-                done ? 'border-rating-good/60 bg-rating-good/10' : 'border-border bg-surface'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 text-xs text-muted">
-                <span className="text-base">{AREA_ICONS[area]}</span>
-                <span className="font-semibold">{AREA_LABELS[area]}</span>
-              </div>
-              <div className="mt-1 text-2xl font-black tabular-nums">
-                🔥 {s.current}
-                <span className="ml-1 text-xs font-medium text-muted">dni</span>
-              </div>
-              <div className={`mt-0.5 text-[11px] ${done ? 'text-rating-good' : 'text-muted'}`}>
-                {done ? '✓ dziś zaliczone' : 'dziś jeszcze nie'}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Nałogi — dni na czysto + XP za serię */}
-      {abstList.length > 0 && (
-        <NavLink to="/nalogi" className="mb-4 block rounded-2xl border border-border bg-surface p-3">
-          <div className="mb-1.5 flex items-baseline justify-between">
-            <span className="text-xs uppercase tracking-wide text-muted">🚭 Nałogi</span>
-            <span className="text-[11px] font-bold text-rating-good">
-              +{rank.abstinenceToday} XP dziś
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {abstList.map((a) => {
-              const days = Math.max(0, diffDays(todayISO(), a.started_on))
-              return (
-                <span
-                  key={a.id}
-                  className="flex items-center gap-1.5 rounded-full bg-surface2 px-3 py-1.5 text-xs font-semibold"
-                >
-                  {a.name}
-                  <span className="font-black tabular-nums">🔥 {days}</span>
-                  <span className="text-[10px] font-bold text-rating-good">
-                    +{abstinenceDayXP(days)}/d
-                  </span>
-                </span>
-              )
-            })}
-          </div>
-        </NavLink>
-      )}
+      {/* Nałogi — pełna obsługa w głównym panelu */}
+      <AbstinencePanel list={abstList} xpToday={rank.abstinenceToday} />
 
       {/* Date picker (kompaktowy) */}
       <div className="mb-3 flex items-center justify-between rounded-xl border border-border bg-surface px-4 py-2.5 text-sm">
@@ -280,7 +188,7 @@ export default function Today() {
         </button>
       )}
       <p className="mt-2 text-center text-[11px] text-muted">
-        „Zamknij dzień" uzupełnia domyślne (sen 7h, wydatki 0, kosmetyki ✓) dla niewpisanych.
+        „Zamknij dzień" uzupełnia domyślne (sen 7h, wydatki dobrze, kosmetyki ✓) dla niewpisanych.
       </p>
     </div>
   )
@@ -344,6 +252,7 @@ function HabitRow({
         </span>
       </div>
       {habit.input_kind === 'scale3' && <Scale3Input habit={habit} date={date} log={log} />}
+      {habit.input_kind === 'scale4' && <Scale4Input habit={habit} date={date} log={log} />}
       {habit.input_kind === 'check' && <CheckInput habit={habit} date={date} log={log} />}
       {habit.input_kind === 'number' &&
         (habit.score_mode === 'range' ? (
@@ -377,6 +286,41 @@ function Scale3Input({ habit, date, log }: { habit: Habit; date: string; log?: L
             }`}
           >
             <div className="text-xl">{s.short}</div>
+            {s.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Wydatki: samoocena „ile poszło na głupoty" — bardzo źle / źle / okej / dobrze. */
+function Scale4Input({ habit, date, log }: { habit: Habit; date: string; log?: Log }) {
+  const upsert = useUpsertLog()
+  const del = useDeleteLog()
+  const selCls = (v: number) =>
+    v >= 1
+      ? 'border-rating-good bg-rating-good/15 text-rating-good'
+      : v >= 0.8
+        ? 'border-rating-mid bg-rating-mid/15 text-rating-mid'
+        : 'border-rating-bad bg-rating-bad/15 text-rating-bad'
+  return (
+    <div className="grid grid-cols-4 gap-1.5">
+      {SCALE4.map((s) => {
+        const sel = log && log.value === s.value
+        return (
+          <button
+            key={s.value}
+            onClick={() => {
+              buzz(BUZZ_TAP)
+              if (sel) del.mutate({ habit_id: habit.id, log_date: date })
+              else upsert.mutate({ habit_id: habit.id, log_date: date, value: s.value })
+            }}
+            className={`rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
+              sel ? selCls(s.value) : 'border-border bg-surface2 text-muted active:bg-border'
+            }`}
+          >
+            <div className="text-lg">{s.short}</div>
             {s.label}
           </button>
         )

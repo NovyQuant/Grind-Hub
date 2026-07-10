@@ -20,6 +20,14 @@ export interface AreaLevel {
 
 export type StreakUnit = 'day' | 'week'
 
+// Stan dnia bieżącego tygodnia (pon–ndz) — wspólny format kropek dla
+// streaków dziennych i tygodniowych.
+export type DotState = 'good' | 'mid' | 'bad' | 'none' | 'future'
+export interface WeekDot {
+  date: string
+  state: DotState
+}
+
 export interface AreaStreak {
   unit: StreakUnit
   current: number
@@ -27,6 +35,7 @@ export interface AreaStreak {
   periodDone: boolean // dziś (day) / bieżący tydzień (week) już zaliczony
   weekAcc: number // postęp bieżącego tygodnia (tylko unit=week)
   weekTarget: number
+  week: WeekDot[] // bieżący tydzień pon–ndz, kropka per dzień
 }
 
 export interface ProgressState {
@@ -51,6 +60,50 @@ function weeklyAcc(habit: Habit, weekStart: string, getValue: ValueLookup): numb
     acc += habit.input_kind === 'check' ? (v >= 1 ? 1 : 0) : v // scale3 sumuje jakość
   }
   return acc
+}
+
+/**
+ * Stan dnia dla obszaru (do kropek tygodnia i heatmapy).
+ * Obszar dzienny: wg f dnia (good ≥0.8, mid ≥0.5, bad poniżej; dziś w toku = none).
+ * Obszar tygodniowy: dzień z sesją/wpisem (good = pełna, mid = połówka, none = brak
+ * — dzień bez sesji to normalny odpoczynek, nie porażka).
+ */
+export function areaDayState(
+  area: Area,
+  habits: Habit[],
+  date: string,
+  today: string,
+  getValue: ValueLookup
+): DotState {
+  if (date > today) return 'future'
+  const weekly = habits.filter((h) => h.area === area && h.active && h.cadence === 'weekly')
+  if (weekly.length > 0) {
+    let best: number | undefined
+    for (const h of weekly) {
+      const v = getValue(h.id, date)
+      if (v === undefined) continue
+      const q = h.input_kind === 'check' ? (v >= 1 ? 1 : 0) : v
+      best = Math.max(best ?? 0, q)
+    }
+    if (best === undefined) return 'none'
+    if (best >= 1) return 'good'
+    if (best >= 0.5) return 'mid'
+    return 'bad'
+  }
+  const f = areaDailyF(area, habits, date, getValue) ?? 0
+  if (f >= AREA_GOOD_THRESHOLD) return 'good'
+  if (date === today) return 'none' // dziś w toku
+  if (f >= AREA_BAD_THRESHOLD) return 'mid'
+  return 'bad'
+}
+
+/** Kropki bieżącego tygodnia pon–ndz dla obszaru. */
+function weekDots(area: Area, habits: Habit[], today: string, getValue: ValueLookup): WeekDot[] {
+  const ws = weekStartISO(today)
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(ws, i)
+    return { date, state: areaDayState(area, habits, date, today, getValue) }
+  })
 }
 
 /** Streak dzienny obszaru: dzień zaliczony gdy f obszaru >= próg. */
@@ -83,11 +136,21 @@ function dayStreak(
   }
   best = Math.max(best, current)
 
-  return { unit: 'day', current, best, periodDone, weekAcc: 0, weekTarget: 0 }
+  return {
+    unit: 'day',
+    current,
+    best,
+    periodDone,
+    weekAcc: 0,
+    weekTarget: 0,
+    week: weekDots(area, habits, today, getValue),
+  }
 }
 
 /** Streak tygodniowy obszaru: tydzień pon–ndz zaliczony gdy każdy nawyk trafi weekly_target. */
 function weekStreak(
+  area: Area,
+  habits: Habit[],
   weeklyHabits: Habit[],
   from: string,
   today: string,
@@ -121,7 +184,15 @@ function weekStreak(
   const weekAcc = weeklyHabits.reduce((s, h) => s + weeklyAcc(h, curWeek, getValue), 0)
   const weekTarget = weeklyHabits.reduce((s, h) => s + targetOf(h), 0)
 
-  return { unit: 'week', current, best, periodDone, weekAcc, weekTarget }
+  return {
+    unit: 'week',
+    current,
+    best,
+    periodDone,
+    weekAcc,
+    weekTarget,
+    week: weekDots(area, habits, today, getValue),
+  }
 }
 
 export function computeProgress(habits: Habit[], logs: Log[]): ProgressState {
@@ -136,7 +207,7 @@ export function computeProgress(habits: Habit[], logs: Log[]): ProgressState {
     const weeklyHabits = habits.filter((h) => h.area === area && h.active && h.cadence === 'weekly')
     streaks[area] =
       weeklyHabits.length > 0
-        ? weekStreak(weeklyHabits, from, today, getValue)
+        ? weekStreak(area, habits, weeklyHabits, from, today, getValue)
         : dayStreak(area, habits, days, from, today, getValue)
   }
 

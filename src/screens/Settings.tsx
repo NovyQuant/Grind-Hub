@@ -186,7 +186,13 @@ export default function Settings() {
 
 function describe(h: Habit): string {
   const kind =
-    h.input_kind === 'check' ? 'odhacz' : h.input_kind === 'scale3' ? 'skala 3' : 'liczba'
+    h.input_kind === 'check'
+      ? 'odhacz'
+      : h.input_kind === 'scale3'
+        ? 'skala 3'
+        : h.input_kind === 'scale4'
+          ? 'skala 4'
+          : 'liczba'
   const cad = h.cadence === 'weekly' ? `tyg ×${h.weekly_target}` : 'dziennie'
   return `${AREA_LABELS[h.area]} · ${kind} · ${cad} · waga ${h.weight}`
 }
@@ -257,6 +263,7 @@ function Editor({
             <Select value={draft.input_kind ?? 'check'} onChange={(v) => set({ input_kind: v as InputKind })}>
               <option value="check">odhacz (tak/nie)</option>
               <option value="scale3">skala 3 (słabo/okej/super)</option>
+              <option value="scale4">skala 4 (bardzo źle→dobrze)</option>
               <option value="number">liczba</option>
             </Select>
           </Field>

@@ -83,6 +83,8 @@ export interface RankState {
  *   połowa tempa (f≥0.5) = +0.5, poniżej = −1
  * - check: zrobione = +1, brak = −1
  * - scale3: super = +1, okej = +0.5, słabo/brak = −1
+ * - scale4 (wydatki, samoocena): dobrze = +1, okej = +0.5, źle = −1,
+ *   bardzo źle = −2 (podwójna kara)
  * - number range (sen, falloff 0.5/h): pasmo 7–8h (f=1) = +1,
  *   6:30–7 i 8–8:30 (f≥0.75) = +0.5, poza (f<0.75) = −1
  * - number at_most (głupoty): strefa wolna (f=1) = +1, lekko ponad (f≥0.67) = +0.5, dalej = −1
@@ -109,6 +111,12 @@ export function habitXPSign(
     if (v >= 1) return 1
     if (v >= 0.5) return OK_XP_SIGN
     return -1
+  }
+  if (habit.input_kind === 'scale4') {
+    if (v >= 1) return 1
+    if (v >= 0.8) return OK_XP_SIGN
+    if (v >= 0.4) return -1
+    return -2
   }
 
   // number

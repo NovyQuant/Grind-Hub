@@ -1,79 +1,212 @@
-import { useMemo } from 'react'
+import { Fragment, useMemo } from 'react'
 import { useAbstinences, useHabits, useLogs } from '../lib/queries'
-import { computeProgress } from '../lib/progress'
-import { computeRank } from '../lib/rank'
-import { AREAS, AREA_ICONS, AREA_LABELS } from '../lib/types'
-import { parseISO } from '../lib/date'
+import { computeProgress, areaDayState, DotState } from '../lib/progress'
+import { computeRank, rankLabelOf, RANK_TIERS, RankTier } from '../lib/rank'
+import { AREAS, AREA_ICONS, AREA_LABELS, Habit, Log } from '../lib/types'
+import { addDays, dateRange, parseISO, todayISO } from '../lib/date'
+import { makeLookup } from '../lib/ratings'
+import StreakTile from '../components/StreakTile'
 
 const WEEKDAY = ['N', 'P', 'W', 'Ś', 'C', 'P', 'S'] // getDay(): 0 = niedziela
 
-/** Słupkowy wykres XP dzień po dniu: zielone nad zerem, czerwone pod. */
-function XPChart({ history }: { history: { date: string; xp: number }[] }) {
-  const days = history.slice(-14)
-  if (days.length === 0) return null
+/** Granice dywizji (skumulowane XP) → ranga PO przekroczeniu granicy. */
+function divisionBoundaries(): { xp: number; label: string; color: string }[] {
+  const out: { xp: number; label: string; color: string }[] = []
+  let acc = 0
+  for (let t = 0; t < RANK_TIERS.length; t++) {
+    const tier = RANK_TIERS[t]
+    if (tier.divCost === Infinity) break
+    for (let d = tier.divisions; d >= 1; d--) {
+      acc += tier.divCost
+      if (d > 1) out.push({ xp: acc, label: rankLabelOf(tier, d - 1), color: tier.color })
+      else {
+        const nt = RANK_TIERS[t + 1]
+        out.push({ xp: acc, label: rankLabelOf(nt, nt.divisions === 4 ? 4 : null), color: nt.color })
+      }
+    }
+  }
+  return out
+}
 
-  const W = 336 // 14 × 24
-  const H = 144
-  const AXIS = 16 // miejsce na litery dni
-  const PAD = 12 // miejsce na etykietę nad słupkiem
-  const plotH = H - AXIS - PAD
-  const slot = W / days.length
-  const barW = slot - 4
-  // jedna skala px/XP dla obu stron zera
-  const maxPos = Math.max(0, ...days.map((d) => d.xp))
-  const maxNeg = Math.max(0, ...days.map((d) => -d.xp))
-  const unit = plotH / Math.max(1, maxPos + maxNeg)
-  const zeroY = PAD + maxPos * unit
+const BOUNDARIES = divisionBoundaries()
+
+function fmtDay(date: string): string {
+  return `${date.slice(8, 10)}.${date.slice(5, 7)}`
+}
+
+/**
+ * Wykres LP à la op.gg: skumulowane XP dzień po dniu (ostatnie 30 dni),
+ * progi dywizji jako poziome linie z nazwą rangi.
+ */
+function LPChart({ history, tier }: { history: { date: string; xp: number }[]; tier: RankTier }) {
+  let acc = 0
+  const cum = history.map((d) => {
+    acc += d.xp
+    return { date: d.date, xp: d.xp, total: Math.max(0, Math.round(acc)) }
+  })
+  const pts = cum.slice(-30)
+  if (pts.length < 2) return <p className="text-sm text-muted">Za mało danych — loguj dalej.</p>
+
+  const W = 340
+  const H = 190
+  const M = { t: 14, r: 48, b: 18, l: 8 }
+  const plotW = W - M.l - M.r
+  const plotH = H - M.t - M.b
+
+  const totals = pts.map((p) => p.total)
+  const rawMin = Math.min(...totals)
+  const rawMax = Math.max(...totals)
+  const pad = Math.max((rawMax - rawMin) * 0.15, 40)
+  const lo = Math.max(0, rawMin - pad)
+  const hi = rawMax + pad
+  const xs = (i: number) => M.l + (plotW * i) / (pts.length - 1)
+  const ys = (v: number) => M.t + plotH * (1 - (v - lo) / (hi - lo))
+
+  const linePts = pts.map((p, i) => `${xs(i).toFixed(1)},${ys(p.total).toFixed(1)}`).join(' ')
+  const areaPath = `M ${xs(0).toFixed(1)},${ys(pts[0].total).toFixed(1)} L ${linePts
+    .split(' ')
+    .join(' L ')} L ${xs(pts.length - 1).toFixed(1)},${(M.t + plotH).toFixed(1)} L ${xs(0).toFixed(
+    1
+  )},${(M.t + plotH).toFixed(1)} Z`
+
+  const bounds = BOUNDARIES.filter((b) => b.xp >= lo && b.xp <= hi)
+  const mondays = pts
+    .map((p, i) => ({ p, i }))
+    .filter(({ p }) => parseISO(p.date).getDay() === 1)
+  const last = pts[pts.length - 1]
+  const slot = plotW / (pts.length - 1)
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="XP dzień po dniu">
-      {/* linia zera */}
-      <line x1={0} y1={zeroY} x2={W} y2={zeroY} stroke="#243040" strokeWidth={1} />
-      {days.map((d, i) => {
-        const isLast = i === days.length - 1
-        const h = Math.abs(d.xp) * unit
-        const x = i * slot + 2
-        const y = d.xp >= 0 ? zeroY - h : zeroY
-        const dow = parseISO(d.date).getDay()
-        return (
-          <g key={d.date}>
-            <rect
-              x={x}
-              y={y}
-              width={barW}
-              height={Math.max(h, d.xp === 0 ? 1.5 : 2)}
-              rx={3}
-              fill={d.xp < 0 ? '#e5484d' : d.xp === 0 ? '#243040' : '#30c85e'}
-              opacity={isLast ? 1 : 0.85}
-            >
-              <title>{`${d.date}: ${d.xp >= 0 ? '+' : ''}${d.xp} XP`}</title>
-            </rect>
-            {isLast && (
-              <text
-                x={x + barW / 2}
-                y={d.xp >= 0 ? y - 4 : zeroY - 4}
-                textAnchor="middle"
-                fontSize={9}
-                fontWeight={800}
-                fill={d.xp < 0 ? '#e5484d' : '#30c85e'}
-              >
-                {d.xp >= 0 ? '+' : ''}{d.xp}
-              </text>
-            )}
-            <text
-              x={x + barW / 2}
-              y={H - 4}
-              textAnchor="middle"
-              fontSize={8}
-              fill={isLast ? '#e6edf5' : '#7c8ba1'}
-              fontWeight={isLast ? 800 : 500}
-            >
-              {WEEKDAY[dow]}
-            </text>
-          </g>
-        )
-      })}
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Skumulowane XP — ostatnie 30 dni">
+      {/* progi dywizji */}
+      {bounds.map((b) => (
+        <g key={b.xp}>
+          <line x1={M.l} y1={ys(b.xp)} x2={W - M.r} y2={ys(b.xp)} stroke="#243040" strokeWidth={1} />
+          <circle cx={M.l + 4} cy={ys(b.xp) - 5} r={2} fill={b.color} />
+          <text x={M.l + 9} y={ys(b.xp) - 2.5} fontSize={8} fill="#7c8ba1" fontWeight={600}>
+            {b.label}
+          </text>
+        </g>
+      ))}
+
+      {/* obszar + linia */}
+      <path d={areaPath} fill={tier.color} opacity={0.1} />
+      <polyline
+        points={linePts}
+        fill="none"
+        stroke={tier.color}
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+
+      {/* końcówka: kropka z ringiem + wartość */}
+      <circle cx={xs(pts.length - 1)} cy={ys(last.total)} r={4.5} fill={tier.color} stroke="#121821" strokeWidth={2} />
+      <text
+        x={xs(pts.length - 1) + 8}
+        y={ys(last.total) + 3.5}
+        fontSize={10}
+        fontWeight={800}
+        fill="#e6edf5"
+      >
+        {last.total.toLocaleString('pl-PL')}
+      </text>
+
+      {/* daty (poniedziałki) */}
+      {mondays.map(({ p, i }) => (
+        <text key={p.date} x={xs(i)} y={H - 5} textAnchor="middle" fontSize={8} fill="#7c8ba1">
+          {fmtDay(p.date)}
+        </text>
+      ))}
+
+      {/* hover: dzień po dniu */}
+      {pts.map((p, i) => (
+        <rect
+          key={p.date}
+          x={xs(i) - slot / 2}
+          y={0}
+          width={slot}
+          height={H}
+          fill="transparent"
+        >
+          <title>{`${fmtDay(p.date)}: ${p.total.toLocaleString('pl-PL')} XP (${p.xp >= 0 ? '+' : ''}${p.xp} tego dnia)`}</title>
+        </rect>
+      ))}
     </svg>
+  )
+}
+
+// Heatmapa: te same stany co kropki tygodnia (jeden język wizualny).
+const CELL_CLASS: Record<DotState, string> = {
+  good: 'bg-rating-good',
+  mid: 'bg-rating-mid',
+  bad: 'bg-rating-bad/70',
+  none: 'bg-surface2',
+  future: 'bg-surface2/40',
+}
+
+const STATE_LABEL: Record<DotState, string> = {
+  good: 'zaliczone',
+  mid: 'połowicznie',
+  bad: 'słabo',
+  none: 'brak / wolne',
+  future: '—',
+}
+
+/** Heatmapa obszar × dzień — ostatnie 14 dni. */
+function Heatmap({ habits, logs }: { habits: Habit[]; logs: Log[] }) {
+  const today = todayISO()
+  const days = dateRange(addDays(today, -13), today)
+  const getValue = makeLookup(logs)
+
+  return (
+    <div>
+      <div className="grid gap-0.5" style={{ gridTemplateColumns: `1.5rem repeat(${days.length}, 1fr)` }}>
+        <span />
+        {days.map((d) => {
+          const isToday = d === today
+          return (
+            <span
+              key={d}
+              className={`pb-0.5 text-center text-[8px] ${isToday ? 'font-black text-text' : 'text-muted'}`}
+            >
+              {WEEKDAY[parseISO(d).getDay()]}
+            </span>
+          )
+        })}
+        {AREAS.map((area) => (
+          <Fragment key={area}>
+            <span className="flex items-center justify-center text-xs">
+              {AREA_ICONS[area]}
+            </span>
+            {days.map((d) => {
+              const state = areaDayState(area, habits, d, today, getValue)
+              return (
+                <span
+                  key={`${area}-${d}`}
+                  className={`aspect-square rounded ${CELL_CLASS[state]}`}
+                  title={`${AREA_LABELS[area]} ${fmtDay(d)}: ${STATE_LABEL[state]}`}
+                />
+              )
+            })}
+          </Fragment>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted">
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-sm bg-rating-good" /> zaliczone
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-sm bg-rating-mid" /> połowicznie
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-sm bg-rating-bad/70" /> słabo
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-sm bg-surface2" /> brak / wolne
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -122,88 +255,44 @@ export default function Levels() {
   if (habits.isLoading || logs.isLoading)
     return <div className="p-6 text-muted">Ładowanie…</div>
 
-  const last14 = rank.history.slice(-14)
-  const sum14 = last14.reduce((s, d) => s + d.xp, 0)
+  const last30 = rank.history.slice(-30)
+  const sum30 = last30.reduce((s, d) => s + d.xp, 0)
 
   return (
     <div className="p-4 md:p-6">
       <h1 className="mb-4 text-2xl font-extrabold tracking-tight">Poziomy 🎮</h1>
 
-      {/* Wykres XP — ostatnie 14 dni */}
+      {/* Wykres LP — wspinaczka po randze */}
       <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
         <div className="mb-2 flex items-baseline justify-between">
-          <span className="text-xs uppercase tracking-wide text-muted">XP — ostatnie 14 dni</span>
+          <span className="text-xs uppercase tracking-wide text-muted">
+            Wspinaczka — XP i progi dywizji
+          </span>
           <span
             className={`text-sm font-black tabular-nums ${
-              sum14 < 0 ? 'text-rating-bad' : 'text-rating-good'
+              sum30 < 0 ? 'text-rating-bad' : 'text-rating-good'
             }`}
           >
-            {sum14 >= 0 ? '+' : ''}{sum14} XP
+            {sum30 >= 0 ? '+' : ''}{sum30} XP / 30 dni
           </span>
         </div>
-        <XPChart history={rank.history} />
+        <LPChart history={rank.history} tier={rank.tier} />
       </div>
 
-      {/* Streaki per obszar — rozpisane */}
+      {/* Heatmapa: obszar × dzień */}
+      <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
+        <div className="mb-2 text-xs uppercase tracking-wide text-muted">
+          Mapa dni — ostatnie 14 dni
+        </div>
+        <Heatmap habits={habits.data ?? []} logs={logs.data ?? []} />
+      </div>
+
+      {/* Streaki per obszar — ten sam format co w Dziś */}
       <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Streaki</h2>
-      <div className="mb-5 flex flex-col gap-2">
-        {AREAS.map((area) => {
-          const s = p.streaks[area]
-          const t = rank.perAreaToday[area]
-          const week = s.unit === 'week'
-          const pct = week && s.weekTarget > 0 ? Math.min(100, (s.weekAcc / s.weekTarget) * 100) : 0
-          return (
-            <div
-              key={area}
-              className={`rounded-2xl border p-3.5 ${
-                s.periodDone ? 'border-rating-good/50 bg-rating-good/5' : 'border-border bg-surface'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-xl">{AREA_ICONS[area]}</span>
-                <span className="font-semibold">{AREA_LABELS[area]}</span>
-                {t && t.mult > 1 && (
-                  <span
-                    className="rounded-full bg-[#a855f7]/15 px-2 py-0.5 text-[10px] font-black text-[#c084fc]"
-                    title="Mnożnik XP za serię"
-                  >
-                    ×{t.mult.toFixed(2).replace(/0$/, '')} XP
-                  </span>
-                )}
-                <span className="ml-auto text-xl font-black tabular-nums">
-                  🔥 {s.current}
-                  <span className="ml-1 text-xs font-medium text-muted">{week ? 'tyg' : 'dni'}</span>
-                </span>
-              </div>
-              {week ? (
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface2">
-                    <div
-                      className={`h-full rounded-full transition-all ${
-                        s.periodDone ? 'bg-rating-good' : 'bg-[#a855f7]'
-                      }`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <span
-                    className={`text-xs font-bold tabular-nums ${
-                      s.periodDone ? 'text-rating-good' : 'text-[#c084fc]'
-                    }`}
-                  >
-                    {s.periodDone ? '✓ tydzień zaliczony' : `${s.weekAcc}/${s.weekTarget} w tym tyg`}
-                  </span>
-                </div>
-              ) : (
-                <div className="mt-1 flex items-center justify-between text-[11px]">
-                  <span className={s.periodDone ? 'text-rating-good' : 'text-muted'}>
-                    {s.periodDone ? '✓ dziś zaliczone' : 'dziś jeszcze nie'}
-                  </span>
-                  <span className="text-muted">rekord {s.best}</span>
-                </div>
-              )}
-            </div>
-          )
-        })}
+      <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-3">
+        {AREAS.map((area) => (
+          <StreakTile key={area} area={area} s={p.streaks[area]} />
+        ))}
       </div>
 
       {/* Poziomy obszarów */}
@@ -244,27 +333,6 @@ export default function Levels() {
             </div>
           )
         })}
-      </div>
-
-      {/* Tydzień */}
-      <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Ostatnie 7 dni</h2>
-      <div className="rounded-2xl border border-border bg-surface p-4">
-        <div className="flex flex-col gap-1.5">
-          {AREAS.map((area) => (
-            <div key={area} className="flex items-center gap-2">
-              <span className="w-6 text-center">{AREA_ICONS[area]}</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface2">
-                <div
-                  className="h-full bg-rating-good"
-                  style={{ width: `${p.week.perArea[area]}%` }}
-                />
-              </div>
-              <span className="w-9 text-right text-[11px] text-muted">
-                {p.week.perArea[area]}%
-              </span>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   )
