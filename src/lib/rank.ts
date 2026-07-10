@@ -7,8 +7,9 @@ import { habitDailyF, makeLookup, ValueLookup } from './ratings'
 // słabo = −waga×25 (wydatki scale4: bardzo źle = −2×). Seria dni na plusie
 // w obszarze daje mnożnik +5%/dzień (maks ×2) — tylko do dodatniego XP.
 // Nawyki tygodniowe (trening, projekt): każda sesja = mały +XP (skalowany
-// jakością wpisu), brak sesji = 0 (odpoczynek nie karze), a nabicie celu
-// tygodnia pon–ndz = duży bonus. Bez mnożnika serii.
+// jakością wpisu), brak sesji = 0 (odpoczynek nie karze), nabicie celu
+// tygodnia pon–ndz = duży bonus, a zawalony (zamknięty) tydzień = kara
+// tej samej wielkości, naliczana w niedzielę. Bez mnożnika serii.
 // Nałogi: +2 XP bazy za każdy czysty dzień, z mnożnikiem serii
 // (wpadka = utrata całego XP bieżącej serii).
 // Dziś w toku: brak wpisu = 0 (neutralne), kara −XP dopiero za zamknięte dni.
@@ -21,6 +22,7 @@ export const STREAK_MULT_CAP = 2 // maks ×2 (od 21. dnia serii)
 export const ABST_XP_PER_DAY = 2 // baza XP za czysty dzień nałogu
 export const SESSION_XP_FRACTION = 0.3 // pojedyncza sesja weekly = 0.3 × waga × 25
 export const WEEKLY_BONUS_MULT = 2 // bonus za nabicie celu tygodnia = 2 × waga × 25
+// kara za niewykonanie celu w zamkniętym tygodniu = tyle co bonus (symetria)
 
 /** XP za pojedynczą sesję nawyku tygodniowego (q = jakość wpisu 0..1). */
 export function weeklySessionXP(habit: Habit, q: number): number {
@@ -230,6 +232,12 @@ export function computeRank(
           if (q > 0) {
             raw += weeklySessionXP(h, q)
             if (crossedWeeklyTarget(h, d, getValue)) raw += weeklyBonusXP(h)
+          }
+          // kara: zamknięty (niedziela, nie dziś), w pełni śledzony tydzień bez celu
+          const ws = weekStartISO(d)
+          if (addDays(ws, 6) === d && !pending && ws >= from) {
+            const target = h.weekly_target && h.weekly_target > 0 ? h.weekly_target : 1
+            if (weeklyAccUpTo(h, d, getValue) < target) raw -= weeklyBonusXP(h)
           }
           max += weeklySessionXP(h, 1) + weeklyBonusXP(h)
         } else {

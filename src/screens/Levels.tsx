@@ -287,17 +287,22 @@ export default function Levels() {
         <Heatmap habits={habits.data ?? []} logs={logs.data ?? []} />
       </div>
 
-      {/* Streaki per obszar — ten sam format co w Dziś */}
+      {/* Streaki per obszar — ten sam format co w Dziś, tygodniowe obok siebie */}
       <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Streaki</h2>
       <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-3">
-        {AREAS.map((area) => (
-          <StreakTile
-            key={area}
-            area={area}
-            s={p.streaks[area]}
-            bonusXP={weeklyAreaBonus(habits.data ?? [], area)}
-          />
-        ))}
+        {[...AREAS]
+          .sort(
+            (a, b) =>
+              (p.streaks[a].unit === 'week' ? 0 : 1) - (p.streaks[b].unit === 'week' ? 0 : 1)
+          )
+          .map((area) => (
+            <StreakTile
+              key={area}
+              area={area}
+              s={p.streaks[area]}
+              bonusXP={weeklyAreaBonus(habits.data ?? [], area)}
+            />
+          ))}
       </div>
 
       {/* Poziomy obszarów */}

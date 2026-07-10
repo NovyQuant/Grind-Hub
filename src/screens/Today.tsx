@@ -104,16 +104,22 @@ export default function Today() {
         </div>
       </NavLink>
 
-      {/* Streaki per obszar — jeden format dla dziennych i tygodniowych */}
+      {/* Streaki per obszar — tygodniowe obok siebie na górze, potem dzienne */}
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3">
-        {AREAS.map((area) => (
-          <StreakTile
-            key={area}
-            area={area}
-            s={progress.streaks[area]}
-            bonusXP={weeklyAreaBonus(active, area)}
-          />
-        ))}
+        {[...AREAS]
+          .sort(
+            (a, b) =>
+              (progress.streaks[a].unit === 'week' ? 0 : 1) -
+              (progress.streaks[b].unit === 'week' ? 0 : 1)
+          )
+          .map((area) => (
+            <StreakTile
+              key={area}
+              area={area}
+              s={progress.streaks[area]}
+              bonusXP={weeklyAreaBonus(active, area)}
+            />
+          ))}
       </div>
 
       {/* Date picker (kompaktowy) — pod streakami, nad resztą */}
@@ -260,7 +266,7 @@ function HabitRow({
         <span className="ml-auto flex items-center gap-1.5">
           {weekly && (
             <span className="rounded-full bg-[#a855f7]/15 px-2 py-0.5 text-[10px] font-semibold text-[#c084fc]">
-              cel {habit.weekly_target}/tydz = +{weeklyBonusXP(habit)} XP
+              cel {habit.weekly_target}/tydz = ±{weeklyBonusXP(habit)} XP
             </span>
           )}
           <XPBadge xp={xp} full={full} weekly={weekly} />
