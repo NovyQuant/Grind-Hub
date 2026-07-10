@@ -1,4 +1,7 @@
 export const AREAS = ['sen', 'silownia', 'dieta', 'finanse', 'kosmetyki', 'rozwoj'] as const
+
+/** Start prowadzenia statystyk — wcześniejsze dni nie liczą się do XP/streaków/heatmapy. */
+export const STATS_SINCE = '2026-07-05'
 export type Area = (typeof AREAS)[number]
 
 export const AREA_LABELS: Record<Area, string> = {

@@ -1,7 +1,7 @@
 import { Fragment, useMemo } from 'react'
 import { useAbstinences, useHabits, useLogs } from '../lib/queries'
 import { computeProgress, areaDayState, DotState } from '../lib/progress'
-import { computeRank, rankLabelOf, RANK_TIERS, RankTier } from '../lib/rank'
+import { computeRank, rankLabelOf, weeklyAreaBonus, RANK_TIERS, RankTier } from '../lib/rank'
 import { AREAS, AREA_ICONS, AREA_LABELS, Habit, Log } from '../lib/types'
 import { addDays, dateRange, parseISO, todayISO } from '../lib/date'
 import { makeLookup } from '../lib/ratings'
@@ -291,7 +291,12 @@ export default function Levels() {
       <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Streaki</h2>
       <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-3">
         {AREAS.map((area) => (
-          <StreakTile key={area} area={area} s={p.streaks[area]} />
+          <StreakTile
+            key={area}
+            area={area}
+            s={p.streaks[area]}
+            bonusXP={weeklyAreaBonus(habits.data ?? [], area)}
+          />
         ))}
       </div>
 

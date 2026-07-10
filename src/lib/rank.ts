@@ -1,20 +1,66 @@
-import { Abstinence, AREAS, Area, Habit, Log } from './types'
+import { Abstinence, AREAS, Area, Habit, Log, STATS_SINCE } from './types'
 import { addDays, dateRange, diffDays, todayISO, weekStartISO } from './date'
 import { habitDailyF, makeLookup, ValueLookup } from './ratings'
 
 // ---------- System rang (à la League of Legends) ----------------------
-// XP w trzech strefach: super = +waga×25, okej = +połowa, słabo = −waga×25.
-// Seria dni na plusie w obszarze daje mnożnik +5%/dzień (maks ×2) — tylko do
-// dodatniego XP. Nałogi: +2 XP bazy za każdy czysty dzień, też z mnożnikiem
-// serii (wpadka = utrata całego XP bieżącej serii).
+// Nawyki dzienne: XP w strefach — super = +waga×25, okej = +połowa,
+// słabo = −waga×25 (wydatki scale4: bardzo źle = −2×). Seria dni na plusie
+// w obszarze daje mnożnik +5%/dzień (maks ×2) — tylko do dodatniego XP.
+// Nawyki tygodniowe (trening, projekt): każda sesja = mały +XP (skalowany
+// jakością wpisu), brak sesji = 0 (odpoczynek nie karze), a nabicie celu
+// tygodnia pon–ndz = duży bonus. Bez mnożnika serii.
+// Nałogi: +2 XP bazy za każdy czysty dzień, z mnożnikiem serii
+// (wpadka = utrata całego XP bieżącej serii).
 // Dziś w toku: brak wpisu = 0 (neutralne), kara −XP dopiero za zamknięte dni.
-// Rangi liczone deterministycznie z logów (bez stanu w DB).
+// Rangi liczone deterministycznie z logów (bez stanu w DB), od STATS_SINCE.
 
 export const XP_PER_WEIGHT = 25
 export const OK_XP_SIGN = 0.5 // okej = połowa pełnego +XP
 export const STREAK_MULT_STEP = 0.05 // +5% za każdy kolejny dzień serii
 export const STREAK_MULT_CAP = 2 // maks ×2 (od 21. dnia serii)
 export const ABST_XP_PER_DAY = 2 // baza XP za czysty dzień nałogu
+export const SESSION_XP_FRACTION = 0.3 // pojedyncza sesja weekly = 0.3 × waga × 25
+export const WEEKLY_BONUS_MULT = 2 // bonus za nabicie celu tygodnia = 2 × waga × 25
+
+/** XP za pojedynczą sesję nawyku tygodniowego (q = jakość wpisu 0..1). */
+export function weeklySessionXP(habit: Habit, q: number): number {
+  return q * SESSION_XP_FRACTION * (habit.weight ?? 1) * XP_PER_WEIGHT
+}
+
+/** Bonus XP za nabicie celu tygodnia (pon–ndz) nawyku tygodniowego. */
+export function weeklyBonusXP(habit: Habit): number {
+  return Math.round(WEEKLY_BONUS_MULT * (habit.weight ?? 1) * XP_PER_WEIGHT)
+}
+
+/** Łączny bonus XP za nabicie celów tygodnia w obszarze (0 dla obszarów dziennych). */
+export function weeklyAreaBonus(habits: Habit[], area: Area): number {
+  return habits
+    .filter((h) => h.active && h.area === area && h.cadence === 'weekly')
+    .reduce((s, h) => s + weeklyBonusXP(h), 0)
+}
+
+/** Jakość wpisu weekly danego dnia: check = 0/1, scale3 = 0/0.5/1. */
+function weeklyQ(habit: Habit, date: string, getValue: ValueLookup): number {
+  const v = getValue(habit.id, date)
+  if (v === undefined) return 0
+  return habit.input_kind === 'check' ? (v >= 1 ? 1 : 0) : Math.max(0, Math.min(1, v))
+}
+
+/** Suma jakości wpisów weekly w tygodniu kalendarzowym do `date` włącznie. */
+function weeklyAccUpTo(habit: Habit, date: string, getValue: ValueLookup): number {
+  let acc = 0
+  for (let d = weekStartISO(date); d <= date; d = addDays(d, 1)) acc += weeklyQ(habit, d, getValue)
+  return acc
+}
+
+/** Czy dzisiejszy wpis domknął cel tygodnia (bonus wpada w dniu nabicia). */
+function crossedWeeklyTarget(habit: Habit, date: string, getValue: ValueLookup): boolean {
+  const target = habit.weekly_target && habit.weekly_target > 0 ? habit.weekly_target : 1
+  const q = weeklyQ(habit, date, getValue)
+  if (q <= 0) return false
+  const acc = weeklyAccUpTo(habit, date, getValue)
+  return acc >= target && acc - q < target
+}
 
 /** Mnożnik serii: dzień 1 = ×1, każdy kolejny +5%, sufit ×2. */
 export function streakMult(run: number): number {
@@ -76,11 +122,10 @@ export interface RankState {
 }
 
 /**
- * Znak XP nawyku danego dnia: +1 super / +0.5 okej / −1 słabo.
+ * Znak XP nawyku DZIENNEGO danego dnia: +1 super / +0.5 okej / −1 słabo.
  * `pending` = dzień w toku (dziś): brak wpisu daje 0 zamiast −1.
+ * (Nawyki weekly rozliczane osobno: sesje + bonus za cel tygodnia.)
  *
- * - weekly (trening, projekt): f z okna 7 dni — cel trafiony (f≥1) = +1,
- *   połowa tempa (f≥0.5) = +0.5, poniżej = −1
  * - check: zrobione = +1, brak = −1
  * - scale3: super = +1, okej = +0.5, słabo/brak = −1
  * - scale4 (wydatki, samoocena): dobrze = +1, okej = +0.5, źle = −1,
@@ -96,13 +141,6 @@ export function habitXPSign(
   getValue: ValueLookup,
   pending: boolean
 ): number {
-  if (habit.cadence === 'weekly') {
-    const f = habitDailyF(habit, date, getValue)
-    if (f >= 1) return 1
-    if (f >= 0.5) return OK_XP_SIGN
-    return -1
-  }
-
   const v = getValue(habit.id, date)
   if (v === undefined) return pending ? 0 : -1
 
@@ -129,7 +167,8 @@ export function habitXPSign(
 
 /**
  * Bazowe XP nawyku danego dnia (bez mnożnika serii) — do podglądu przy wpisie.
- * null = dzień w toku bez wpisu (jeszcze nic nie wisi).
+ * null = brak wpisu dziś (jeszcze nic nie wisi).
+ * Weekly: XP sesji wg jakości wpisu + bonus, jeśli ten wpis domknął cel tygodnia.
  */
 export function habitBaseXP(
   habit: Habit,
@@ -137,7 +176,13 @@ export function habitBaseXP(
   getValue: ValueLookup,
   pending: boolean
 ): number | null {
-  if (habit.cadence === 'daily' && pending && getValue(habit.id, date) === undefined) return null
+  if (habit.cadence === 'weekly') {
+    if (getValue(habit.id, date) === undefined) return null
+    let xp = weeklySessionXP(habit, weeklyQ(habit, date, getValue))
+    if (crossedWeeklyTarget(habit, date, getValue)) xp += weeklyBonusXP(habit)
+    return Math.round(xp)
+  }
+  if (pending && getValue(habit.id, date) === undefined) return null
   return Math.round(habitXPSign(habit, date, getValue, pending) * (habit.weight ?? 1) * XP_PER_WEIGHT)
 }
 
@@ -152,9 +197,11 @@ export function computeRank(
 ): RankState {
   const today = todayISO()
   const getValue = makeLookup(logs)
-  const from = logs.length
+  const earliest = logs.length
     ? logs.reduce((m, l) => (l.log_date < m ? l.log_date : m), logs[0].log_date)
     : today
+  // statystyki prowadzone od STATS_SINCE — wcześniejsze logi nie liczą się do XP
+  const from = earliest < STATS_SINCE ? STATS_SINCE : earliest
 
   const curWeek = weekStartISO(today)
   const byArea = {} as Record<Area, Habit[]>
@@ -173,19 +220,32 @@ export function computeRank(
     const pending = d === today
     let dayTotal = 0
     for (const area of AREAS) {
+      const weeklyArea = byArea[area].some((h) => h.cadence === 'weekly')
       let raw = 0
       let max = 0
       for (const h of byArea[area]) {
-        const w = (h.weight ?? 1) * XP_PER_WEIGHT
-        raw += habitXPSign(h, d, getValue, pending) * w
-        max += w
+        if (h.cadence === 'weekly') {
+          // sesja = mały +, brak sesji = 0; bonus w dniu nabicia celu tygodnia
+          const q = weeklyQ(h, d, getValue)
+          if (q > 0) {
+            raw += weeklySessionXP(h, q)
+            if (crossedWeeklyTarget(h, d, getValue)) raw += weeklyBonusXP(h)
+          }
+          max += weeklySessionXP(h, 1) + weeklyBonusXP(h)
+        } else {
+          const w = (h.weight ?? 1) * XP_PER_WEIGHT
+          raw += habitXPSign(h, d, getValue, pending) * w
+          max += w
+        }
       }
       let xp = raw
-      if (raw > 0) {
-        run[area]++
-        xp = raw * streakMult(run[area])
-      } else if (!pending) {
-        run[area] = 0 // zamknięty dzień bez plusa zrywa serię; dziś w toku nie zeruje
+      if (!weeklyArea) {
+        if (raw > 0) {
+          run[area]++
+          xp = raw * streakMult(run[area])
+        } else if (!pending) {
+          run[area] = 0 // zamknięty dzień bez plusa zrywa serię; dziś w toku nie zeruje
+        }
       }
       dayTotal += xp
       if (pending) {
@@ -193,8 +253,8 @@ export function computeRank(
           xp: Math.round(xp),
           max: Math.round(max),
           // dziś na plusie → mnożnik zastosowany; inaczej → jaki byłby przy plusie
-          mult: streakMult(raw > 0 ? run[area] : run[area] + 1),
-          run: run[area],
+          mult: weeklyArea ? 1 : streakMult(raw > 0 ? run[area] : run[area] + 1),
+          run: weeklyArea ? 0 : run[area],
         }
       }
     }

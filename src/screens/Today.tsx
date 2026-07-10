@@ -4,7 +4,14 @@ import { useAbstinences, useHabits, useLogs, useUpsertLog, useDeleteLog } from '
 import { Habit, Log, SCALE3, SCALE4, AREAS, AREA_ICONS, AREA_LABELS, Area } from '../lib/types'
 import { todayISO } from '../lib/date'
 import { computeProgress } from '../lib/progress'
-import { computeRank, habitBaseXP, XP_PER_WEIGHT } from '../lib/rank'
+import {
+  computeRank,
+  habitBaseXP,
+  weeklyAreaBonus,
+  weeklyBonusXP,
+  weeklySessionXP,
+  XP_PER_WEIGHT,
+} from '../lib/rank'
 import { makeLookup, ValueLookup } from '../lib/ratings'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 import StreakTile from '../components/StreakTile'
@@ -98,16 +105,18 @@ export default function Today() {
       </NavLink>
 
       {/* Streaki per obszar — jeden format dla dziennych i tygodniowych */}
-      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3">
+      <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3">
         {AREAS.map((area) => (
-          <StreakTile key={area} area={area} s={progress.streaks[area]} />
+          <StreakTile
+            key={area}
+            area={area}
+            s={progress.streaks[area]}
+            bonusXP={weeklyAreaBonus(active, area)}
+          />
         ))}
       </div>
 
-      {/* Nałogi — pełna obsługa w głównym panelu */}
-      <AbstinencePanel list={abstList} xpToday={rank.abstinenceToday} />
-
-      {/* Date picker (kompaktowy) */}
+      {/* Date picker (kompaktowy) — pod streakami, nad resztą */}
       <div className="mb-3 flex items-center justify-between rounded-xl border border-border bg-surface px-4 py-2.5 text-sm">
         <span className="text-muted">{isToday ? 'Dzisiaj' : 'Wpis wsteczny'}</span>
         <input
@@ -118,6 +127,9 @@ export default function Today() {
           className="bg-transparent font-medium outline-none [color-scheme:dark]"
         />
       </div>
+
+      {/* Nałogi — pełna obsługa w głównym panelu */}
+      <AbstinencePanel list={abstList} xpToday={rank.abstinenceToday} />
 
       {/* Szybki flow */}
       <div className="flex flex-col gap-3">
@@ -199,11 +211,11 @@ function currentLog(logs: Log[], habitId: string, date: string): Log | undefined
 }
 
 /** Badge XP nawyku: od razu widać, czy wpis daje, czy zabiera punkty. */
-function XPBadge({ xp, full }: { xp: number | null; full: number }) {
+function XPBadge({ xp, full, weekly }: { xp: number | null; full: number; weekly?: boolean }) {
   if (xp === null)
     return (
       <span className="rounded-full bg-surface2 px-2 py-0.5 text-[10px] font-bold text-muted">
-        ±{full} XP
+        {weekly ? `+${full} XP/sesja` : `±${full} XP`}
       </span>
     )
   const cls =
@@ -236,19 +248,22 @@ function HabitRow({
 }) {
   const log = currentLog(logs, habit.id, date)
   const xp = habitBaseXP(habit, date, lookup, isToday)
-  const full = Math.round((habit.weight ?? 1) * XP_PER_WEIGHT)
+  const weekly = habit.cadence === 'weekly'
+  const full = weekly
+    ? Math.round(weeklySessionXP(habit, 1))
+    : Math.round((habit.weight ?? 1) * XP_PER_WEIGHT)
   return (
     <div className="rounded-2xl border border-border bg-surface p-4">
       <div className="mb-3 flex items-center gap-2">
         <span className="text-lg">{AREA_ICONS[habit.area as Area]}</span>
         <span className="font-semibold">{habit.name}</span>
         <span className="ml-auto flex items-center gap-1.5">
-          {habit.cadence === 'weekly' && (
-            <span className="rounded-full bg-surface2 px-2 py-0.5 text-[10px] text-muted">
-              cel {habit.weekly_target}/tydz
+          {weekly && (
+            <span className="rounded-full bg-[#a855f7]/15 px-2 py-0.5 text-[10px] font-semibold text-[#c084fc]">
+              cel {habit.weekly_target}/tydz = +{weeklyBonusXP(habit)} XP
             </span>
           )}
-          <XPBadge xp={xp} full={full} />
+          <XPBadge xp={xp} full={full} weekly={weekly} />
         </span>
       </div>
       {habit.input_kind === 'scale3' && <Scale3Input habit={habit} date={date} log={log} />}

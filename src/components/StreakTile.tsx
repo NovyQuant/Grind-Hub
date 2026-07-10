@@ -14,12 +14,20 @@ const DOT_CLASS: Record<DotState, string> = {
 const DAY_LETTERS = ['P', 'W', 'Ś', 'C', 'P', 'S', 'N']
 
 /** Kafelek streaka obszaru — identyczny format dla dziennych i tygodniowych. */
-export default function StreakTile({ area, s }: { area: Area; s: AreaStreak }) {
+export default function StreakTile({
+  area,
+  s,
+  bonusXP = 0,
+}: {
+  area: Area
+  s: AreaStreak
+  bonusXP?: number // XP za nabicie celu tygodnia (tylko unit=week)
+}) {
   const week = s.unit === 'week'
   const status = week
     ? s.periodDone
-      ? '✓ tydzień zaliczony'
-      : `${s.weekAcc}/${s.weekTarget} w tym tyg`
+      ? `✓ cel nabity${bonusXP > 0 ? ` +${bonusXP} XP` : ''}`
+      : `${s.weekAcc}/${s.weekTarget}${bonusXP > 0 ? ` → +${bonusXP} XP` : ' w tym tyg'}`
     : s.periodDone
       ? '✓ dziś zaliczone'
       : 'dziś jeszcze nie'

@@ -6,6 +6,7 @@ import {
   Habit,
   LEVEL_DECAY_BAD_DAYS,
   Log,
+  STATS_SINCE,
 } from './types'
 import { addDays, dateRange, todayISO, weekStartISO } from './date'
 import { areaDailyF, makeLookup, ValueLookup } from './ratings'
@@ -48,7 +49,8 @@ export interface ProgressState {
 
 function firstDay(logs: Log[]): string {
   if (logs.length === 0) return todayISO()
-  return logs.reduce((min, l) => (l.log_date < min ? l.log_date : min), logs[0].log_date)
+  const earliest = logs.reduce((min, l) => (l.log_date < min ? l.log_date : min), logs[0].log_date)
+  return earliest < STATS_SINCE ? STATS_SINCE : earliest // statystyki od STATS_SINCE
 }
 
 /** Suma wykonania nawyku w tygodniu kalendarzowym od `weekStart` (pon). */
@@ -75,7 +77,7 @@ export function areaDayState(
   today: string,
   getValue: ValueLookup
 ): DotState {
-  if (date > today) return 'future'
+  if (date > today || date < STATS_SINCE) return 'future' // poza zakresem statystyk
   const weekly = habits.filter((h) => h.area === area && h.active && h.cadence === 'weekly')
   if (weekly.length > 0) {
     let best: number | undefined
