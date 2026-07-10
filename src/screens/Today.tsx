@@ -16,6 +16,7 @@ import { makeLookup, ValueLookup } from '../lib/ratings'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 import StreakTile from '../components/StreakTile'
 import AbstinencePanel from '../components/AbstinencePanel'
+import { useToast } from '../components/Toast'
 
 /** Wartość domyślna do „Zamknij dzień" (null = wymaga ręcznego wpisania).
  *  Odhacz (np. kosmetyki) celowo bez domyślnej: brak kliknięcia = nie zrobione. */
@@ -35,6 +36,7 @@ export default function Today() {
   const logs = useLogs()
   const abstinences = useAbstinences()
   const upsert = useUpsertLog()
+  const toast = useToast()
   const isToday = date === todayISO()
 
   const active = (habits.data ?? []).filter((h) => h.active)
@@ -55,13 +57,22 @@ export default function Today() {
     return <div className="p-6 text-muted">Ładowanie…</div>
 
   function closeDay() {
+    const filled: string[] = []
     for (const h of active) {
       const has = logsList.some((l) => l.habit_id === h.id && l.log_date === date)
       if (has) continue
       const dv = defaultValue(h)
-      if (dv != null) upsert.mutate({ habit_id: h.id, log_date: date, value: dv })
+      if (dv != null) {
+        upsert.mutate({ habit_id: h.id, log_date: date, value: dv })
+        filled.push(h.name)
+      }
     }
     buzz(BUZZ_DONE)
+    toast(
+      filled.length > 0
+        ? `✅ Dzień domknięty — uzupełniono: ${filled.join(', ')}`
+        : `✅ Dzień domknięty — wszystko już było wpisane (${rank.todayXP >= 0 ? '+' : ''}${rank.todayXP} XP dziś)`
+    )
   }
 
   return (
