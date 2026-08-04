@@ -95,10 +95,24 @@ create table if not exists shopping_items (
   created_at timestamptz default now()
 );
 
+-- Budżet: wpływy i wydatki (kind 'in'|'out'), planned = dopiero pójdzie
+create table if not exists budget_entries (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  kind text not null default 'out',        -- 'in' | 'out'
+  amount numeric not null,                 -- zawsze dodatnia
+  title text not null default '',          -- na co (puste = ogólna kwota)
+  category text,                           -- klucz kategorii, null = bez
+  planned boolean not null default false,  -- true = plan, false = fakt
+  note text,
+  created_at timestamptz default now()
+);
+
 create index if not exists logs_date_idx on logs (log_date);
 create index if not exists snapshots_area_idx on attribute_snapshots (area, snap_date);
 create index if not exists tasks_due_idx on tasks (due_date);
 create index if not exists events_date_idx on events (event_date);
+create index if not exists budget_entries_date_idx on budget_entries (entry_date);
 
 -- ---------- Row Level Security ---------------------------------------
 alter table habits enable row level security;
@@ -109,6 +123,7 @@ alter table abstinences enable row level security;
 alter table tasks enable row level security;
 alter table events enable row level security;
 alter table shopping_items enable row level security;
+alter table budget_entries enable row level security;
 
 create policy "auth full habits" on habits for all to authenticated using (true) with check (true);
 create policy "auth full logs" on logs for all to authenticated using (true) with check (true);
@@ -118,6 +133,7 @@ create policy "auth full abstinences" on abstinences for all to authenticated us
 create policy "auth full tasks" on tasks for all to authenticated using (true) with check (true);
 create policy "auth full events" on events for all to authenticated using (true) with check (true);
 create policy "auth full shopping" on shopping_items for all to authenticated using (true) with check (true);
+create policy "auth full budget" on budget_entries for all to authenticated using (true) with check (true);
 
 -- ---------- Seed nawyków ---------------------------------------------
 insert into habits

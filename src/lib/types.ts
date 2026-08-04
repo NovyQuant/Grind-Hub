@@ -96,16 +96,48 @@ export interface CalendarEvent {
   created_at: string
 }
 
-// Zakupy: short = na teraz, long = kiedyś / większe
-export type ShoppingTerm = 'short' | 'long'
+// Budżet: 'in' = wpłynęło (wypłata, zwrot), 'out' = wyszło (wydatek)
+export type BudgetKind = 'in' | 'out'
 
-export interface ShoppingItem {
+export interface BudgetEntry {
   id: string
-  name: string
-  term: ShoppingTerm
-  price: number | null // zł
-  done: boolean
+  entry_date: string // YYYY-MM-DD
+  kind: BudgetKind
+  amount: number // zawsze dodatnia, znak bierze się z kind
+  title: string // na co (może być puste = ogólna kwota)
+  category: string | null
+  planned: boolean // true = dopiero pójdzie, false = już poszło
+  note: string | null
   created_at: string
+}
+
+export interface BudgetCategory {
+  key: string
+  label: string
+  icon: string
+  kind: BudgetKind
+}
+
+export const BUDGET_CATEGORIES: BudgetCategory[] = [
+  // wpływy
+  { key: 'wyplata', label: 'Wypłata', icon: '💰', kind: 'in' },
+  { key: 'premia', label: 'Premia', icon: '🎁', kind: 'in' },
+  { key: 'zwrot', label: 'Zwrot', icon: '↩️', kind: 'in' },
+  { key: 'inne_in', label: 'Inne', icon: '➕', kind: 'in' },
+  // wydatki
+  { key: 'jedzenie', label: 'Jedzenie', icon: '🍔', kind: 'out' },
+  { key: 'dom', label: 'Dom', icon: '🏠', kind: 'out' },
+  { key: 'rachunki', label: 'Rachunki', icon: '🧾', kind: 'out' },
+  { key: 'transport', label: 'Transport', icon: '🚗', kind: 'out' },
+  { key: 'zdrowie', label: 'Zdrowie', icon: '💊', kind: 'out' },
+  { key: 'rozrywka', label: 'Rozrywka', icon: '🎮', kind: 'out' },
+  { key: 'zakupy', label: 'Zakupy', icon: '🛒', kind: 'out' },
+  { key: 'oszczednosci', label: 'Oszczędności', icon: '🐷', kind: 'out' },
+  { key: 'inne_out', label: 'Inne', icon: '📦', kind: 'out' },
+]
+
+export function budgetCategory(key: string | null): BudgetCategory | null {
+  return BUDGET_CATEGORIES.find((c) => c.key === key) ?? null
 }
 
 // scale3 wartości

@@ -7,30 +7,16 @@ import {
   useEvents,
   useAddEvent,
   useDeleteEvent,
-  useShopping,
-  useAddShoppingItem,
-  useUpdateShoppingItem,
-  useDeleteShoppingItem,
-  useClearBoughtShopping,
 } from '../lib/queries'
-import {
-  CalendarEvent,
-  PRIORITIES,
-  PRIORITY_ORDER,
-  ShoppingItem,
-  ShoppingTerm,
-  Task,
-  TaskPriority,
-} from '../lib/types'
+import { CalendarEvent, PRIORITIES, PRIORITY_ORDER, Task, TaskPriority } from '../lib/types'
 import { addDays, parseISO, toISODate, todayISO } from '../lib/date'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 
-type View = 'taski' | 'kalendarz' | 'zakupy'
+type View = 'taski' | 'kalendarz'
 
 const VIEWS: { key: View; label: string; icon: string }[] = [
   { key: 'taski', label: 'Taski', icon: '✅' },
   { key: 'kalendarz', label: 'Kalendarz', icon: '📅' },
-  { key: 'zakupy', label: 'Zakupy', icon: '🛒' },
 ]
 
 export default function Planner() {
@@ -39,7 +25,7 @@ export default function Planner() {
   return (
     <div className="p-4 md:p-6">
       <h1 className="mb-1 text-2xl font-extrabold tracking-tight">Plan 📅</h1>
-      <p className="mb-4 text-sm text-muted">Taski, plany w kalendarzu i lista zakupów.</p>
+      <p className="mb-4 text-sm text-muted">Taski i plany w kalendarzu.</p>
 
       <div className="mb-4 flex rounded-xl border border-border bg-surface p-1">
         {VIEWS.map((v) => (
@@ -57,7 +43,6 @@ export default function Planner() {
 
       {view === 'taski' && <TasksView />}
       {view === 'kalendarz' && <CalendarView />}
-      {view === 'zakupy' && <ShoppingView />}
     </div>
   )
 }
@@ -514,210 +499,6 @@ function EventRow({ ev }: { ev: CalendarEvent }) {
       <span className="min-w-0 flex-1 truncate text-sm">{ev.title}</span>
       <button
         onClick={() => del.mutate(ev.id)}
-        className="text-xs text-muted hover:text-rating-bad"
-        title="Usuń"
-      >
-        ✕
-      </button>
-    </div>
-  )
-}
-
-// ====================================================================
-// Zakupy — short term / long term
-// ====================================================================
-
-function ShoppingView() {
-  const shopping = useShopping()
-  if (shopping.isLoading) return <div className="p-6 text-muted">Ładowanie…</div>
-
-  const items = shopping.data ?? []
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <ShoppingList
-        term="short"
-        title="🛒 Na teraz"
-        hint="Codzienne zakupy — spożywka, drogeria…"
-        items={items.filter((i) => i.term === 'short')}
-      />
-      <ShoppingList
-        term="long"
-        title="🎯 Long term"
-        hint="Większe rzeczy, na które zbierasz lub czekasz."
-        items={items.filter((i) => i.term === 'long')}
-      />
-    </div>
-  )
-}
-
-/** "1200" / "49,99" → number | null */
-function parsePrice(s: string): number | null {
-  const n = parseFloat(s.replace(/\s/g, '').replace(',', '.'))
-  return Number.isNaN(n) || n < 0 ? null : n
-}
-
-const priceFmt = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 })
-function fmtPrice(n: number): string {
-  return `${priceFmt.format(n)} zł`
-}
-
-function ShoppingList({
-  term,
-  title,
-  hint,
-  items,
-}: {
-  term: ShoppingTerm
-  title: string
-  hint: string
-  items: ShoppingItem[]
-}) {
-  const add = useAddShoppingItem()
-  const clear = useClearBoughtShopping()
-  const [name, setName] = useState('')
-  const [price, setPrice] = useState('')
-
-  const open = items.filter((i) => !i.done)
-  const bought = items.filter((i) => i.done)
-  const total = open.reduce((sum, i) => sum + (i.price ?? 0), 0)
-
-  function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!name.trim()) return
-    buzz(BUZZ_TAP)
-    add.mutate(
-      { name, term, price: parsePrice(price) },
-      {
-        onSuccess: () => {
-          setName('')
-          setPrice('')
-        },
-      }
-    )
-  }
-
-  return (
-    <div className="rounded-2xl border border-border bg-surface p-3">
-      <div className="flex items-baseline justify-between">
-        <span className="font-semibold">{title}</span>
-        {total > 0 && (
-          <span className="text-xs font-semibold tabular-nums text-rating-mid">
-            razem {fmtPrice(total)}
-          </span>
-        )}
-      </div>
-      <div className="mb-3 text-[11px] text-muted">{hint}</div>
-
-      <form onSubmit={submit} className="mb-3 flex gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Dodaj do listy…"
-          className="min-w-0 flex-1 rounded-xl border border-border bg-surface2 px-3 py-2 text-sm outline-none focus:border-rating-good"
-        />
-        <input
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          inputMode="decimal"
-          placeholder="zł"
-          className="w-16 rounded-xl border border-border bg-surface2 px-2 py-2 text-right text-sm outline-none focus:border-rating-good"
-        />
-        <button
-          type="submit"
-          className="rounded-xl bg-rating-good px-3.5 py-2 text-sm font-semibold text-bg"
-        >
-          +
-        </button>
-      </form>
-
-      {items.length === 0 && (
-        <p className="py-3 text-center text-sm text-muted">Pusta lista.</p>
-      )}
-      {open.map((i) => (
-        <ShoppingRow key={i.id} item={i} />
-      ))}
-      {bought.length > 0 && (
-        <>
-          <div className="mb-1 mt-3 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-              Kupione ({bought.length})
-            </span>
-            <button
-              onClick={() => clear.mutate(term)}
-              className="text-[11px] text-muted hover:text-rating-bad"
-            >
-              Wyczyść
-            </button>
-          </div>
-          {bought.map((i) => (
-            <ShoppingRow key={i.id} item={i} />
-          ))}
-        </>
-      )}
-    </div>
-  )
-}
-
-function ShoppingRow({ item }: { item: ShoppingItem }) {
-  const update = useUpdateShoppingItem()
-  const del = useDeleteShoppingItem()
-  const [editPrice, setEditPrice] = useState(false)
-
-  function savePrice(raw: string) {
-    const p = parsePrice(raw)
-    if (p !== item.price) update.mutate({ id: item.id, price: p })
-    setEditPrice(false)
-  }
-
-  return (
-    <div className="mb-1.5 flex items-center gap-3 rounded-xl border border-border bg-surface2 px-3 py-2">
-      <button
-        onClick={() => {
-          buzz(item.done ? BUZZ_TAP : BUZZ_DONE)
-          update.mutate({ id: item.id, done: !item.done })
-        }}
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] ${
-          item.done ? 'border-rating-good bg-rating-good text-bg' : 'border-border'
-        }`}
-        aria-label={item.done ? 'Odznacz' : 'Kupione'}
-      >
-        {item.done && '✓'}
-      </button>
-      <span className={`min-w-0 flex-1 truncate text-sm ${item.done ? 'text-muted line-through' : ''}`}>
-        {item.name}
-      </span>
-      {editPrice ? (
-        <input
-          autoFocus
-          inputMode="decimal"
-          defaultValue={item.price ?? ''}
-          onBlur={(e) => savePrice(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') savePrice((e.target as HTMLInputElement).value)
-            if (e.key === 'Escape') setEditPrice(false)
-          }}
-          className="w-16 rounded-lg border border-border bg-surface px-2 py-1 text-right text-xs outline-none focus:border-rating-good"
-        />
-      ) : (
-        <button
-          onClick={() => setEditPrice(true)}
-          className={`shrink-0 text-xs tabular-nums ${
-            item.price != null ? (item.done ? 'text-muted' : 'text-rating-mid') : 'text-muted/60'
-          }`}
-          title="Ustaw cenę"
-        >
-          {item.price != null ? fmtPrice(item.price) : '+ zł'}
-        </button>
-      )}
-      <button
-        onClick={() => update.mutate({ id: item.id, term: item.term === 'short' ? 'long' : 'short' })}
-        className="text-xs text-muted"
-        title={item.term === 'short' ? 'Przenieś do long term' : 'Przenieś do „na teraz"'}
-      >
-        ⇄
-      </button>
-      <button
-        onClick={() => del.mutate(item.id)}
         className="text-xs text-muted hover:text-rating-bad"
         title="Usuń"
       >

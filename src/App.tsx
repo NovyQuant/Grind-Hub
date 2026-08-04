@@ -6,6 +6,7 @@ import { useReminder } from './lib/reminder'
 import Login from './screens/Login'
 import Today from './screens/Today'
 import Planner from './screens/Planner'
+import Budget from './screens/Budget'
 import Levels from './screens/Levels'
 import Rank from './screens/Rank'
 import Settings from './screens/Settings'
@@ -26,6 +27,7 @@ function ConfigError() {
 const TABS = [
   { to: '/', label: 'Dziś', icon: '🔥', end: true },
   { to: '/plan', label: 'Plan', icon: '📅', end: false },
+  { to: '/budzet', label: 'Budżet', icon: '💰', end: false },
   { to: '/poziomy', label: 'Poziomy', icon: '🎮', end: false },
   { to: '/ranga', label: 'Ranga', icon: '🏆', end: false },
   { to: '/ustawienia', label: 'Więcej', icon: '⚙️', end: false },
@@ -107,6 +109,7 @@ function AuthedApp() {
           <Routes>
             <Route path="/" element={<Today />} />
             <Route path="/plan" element={<Planner />} />
+            <Route path="/budzet" element={<Budget />} />
             <Route path="/poziomy" element={<Levels />} />
             <Route path="/ranga" element={<Rank />} />
             <Route path="/stats" element={<Navigate to="/ranga" replace />} />
