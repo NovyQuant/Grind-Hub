@@ -412,6 +412,8 @@ export function useBudgetMonths() {
       return (data ?? []).map((m) => ({
         ...m,
         income: Number(m.income),
+        income_paid: !!m.income_paid,
+        other_paid: !!m.other_paid,
         other_override: m.other_override == null ? null : Number(m.other_override),
         leftover: m.leftover == null ? null : Number(m.leftover),
         cash: m.cash == null ? null : Number(m.cash),
@@ -426,7 +428,11 @@ export function useBudgetAlloc() {
     queryFn: async (): Promise<BudgetAlloc[]> => {
       const { data, error } = await supabase.from('budget_alloc').select('*')
       if (error) throw error
-      return (data ?? []).map((a) => ({ ...a, amount: Number(a.amount) })) as BudgetAlloc[]
+      return (data ?? []).map((a) => ({
+        ...a,
+        amount: Number(a.amount),
+        paid: !!a.paid,
+      })) as BudgetAlloc[]
     },
   })
 }
@@ -468,7 +474,9 @@ export function useSaveBudgetMonth() {
               ...prev,
               {
                 income: 0,
+                income_paid: false,
                 other_override: null,
+                other_paid: false,
                 leftover: null,
                 cash: null,
                 note: null,
@@ -485,11 +493,16 @@ export function useSaveBudgetMonth() {
   })
 }
 
-/** Zapis komórki worka w danym miesiącu. */
+/** Zapis komórki worka: kwota i/lub status opłacenia. */
 export function useSaveBudgetAlloc() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { period: string; bucket_id: string; amount: number }) => {
+    mutationFn: async (input: {
+      period: string
+      bucket_id: string
+      amount?: number
+      paid?: boolean
+    }) => {
       const { error } = await supabase
         .from('budget_alloc')
         .upsert(input, { onConflict: 'period,bucket_id' })
@@ -502,8 +515,16 @@ export function useSaveBudgetAlloc() {
       qc.setQueryData<BudgetAlloc[]>(
         ['budget_alloc'],
         hit
-          ? prev.map((a) => (a === hit ? { ...a, amount: input.amount } : a))
-          : [...prev, { id: `tmp-${input.period}-${input.bucket_id}`, ...input }]
+          ? prev.map((a) => (a === hit ? { ...a, ...input } : a))
+          : [
+              ...prev,
+              {
+                id: `tmp-${input.period}-${input.bucket_id}`,
+                amount: 0,
+                paid: false,
+                ...input,
+              } as BudgetAlloc,
+            ]
       )
       return { prev }
     },
@@ -527,6 +548,7 @@ export function useAddBudgetMonth() {
         period: input.period,
         bucket_id: a.bucket_id,
         amount: a.amount,
+        paid: false,
       }))
       if (rows.length > 0) {
         const { error: e2 } = await supabase

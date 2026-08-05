@@ -19,6 +19,7 @@ import { BudgetAlloc, BudgetBucket, BudgetItem, BudgetMonth } from '../lib/types
 import {
   AllocMap,
   OTHER_COLOR,
+  PaidMap,
   addPeriods,
   allocKey,
   bucketColor,
@@ -65,6 +66,12 @@ export default function Budget() {
   const allocMap: AllocMap = useMemo(() => {
     const m = new Map<string, number>()
     for (const a of allocs) m.set(allocKey(a.period, a.bucket_id), a.amount)
+    return m
+  }, [allocs])
+
+  const paidMap: PaidMap = useMemo(() => {
+    const m = new Map<string, boolean>()
+    for (const a of allocs) m.set(allocKey(a.period, a.bucket_id), a.paid)
     return m
   }, [allocs])
 
@@ -121,6 +128,7 @@ export default function Budget() {
               rows={rows}
               cols={cols}
               allocMap={allocMap}
+              paidMap={paidMap}
               itemCount={itemCount}
               selected={selected}
               onSelect={setSelected}
@@ -134,6 +142,7 @@ export default function Budget() {
                 rows={rows}
                 cols={cols}
                 allocMap={allocMap}
+                paidMap={paidMap}
                 itemCount={itemCount}
                 selected={selected}
                 onSelect={setSelected}
@@ -152,6 +161,7 @@ export default function Budget() {
               month={rows.find((m) => m.period === selected)}
               buckets={cols}
               allocMap={allocMap}
+              paidMap={paidMap}
               items={allItems}
               onClose={() => setSelected(null)}
             />
@@ -170,6 +180,7 @@ function ShortView({
   rows,
   cols,
   allocMap,
+  paidMap,
   itemCount,
   selected,
   onSelect,
@@ -177,6 +188,7 @@ function ShortView({
   rows: BudgetMonth[]
   cols: BudgetBucket[]
   allocMap: AllocMap
+  paidMap: PaidMap
   itemCount: Map<string, number>
   selected: string | null
   onSelect: (p: string | null) => void
@@ -210,6 +222,7 @@ function ShortView({
             month={m}
             cols={cols}
             allocMap={allocMap}
+            paidMap={paidMap}
             itemCount={itemCount}
             isNow={period === now}
             isSelected={period === selected}
@@ -225,6 +238,7 @@ function MonthCard({
   month,
   cols,
   allocMap,
+  paidMap,
   itemCount,
   isNow,
   isSelected,
@@ -233,12 +247,16 @@ function MonthCard({
   month: BudgetMonth
   cols: BudgetBucket[]
   allocMap: AllocMap
+  paidMap: PaidMap
   itemCount: Map<string, number>
   isNow: boolean
   isSelected: boolean
   onSelect: () => void
 }) {
+  const saveMonth = useSaveBudgetMonth()
+  const setAlloc = useSaveBudgetAlloc()
   const c = rowCalc(month, cols, allocMap)
+
   const parts = [
     ...cols.map((b, i) => ({
       key: b.id,
@@ -246,7 +264,14 @@ function MonthCard({
       icon: b.icon,
       color: bucketColor(i),
       value: allocMap.get(allocKey(month.period, b.id)) ?? 0,
+      paid: paidMap.get(allocKey(month.period, b.id)) ?? false,
       items: itemCount.get(allocKey(month.period, b.id)) ?? 0,
+      toggle: () =>
+        setAlloc.mutate({
+          period: month.period,
+          bucket_id: b.id,
+          paid: !(paidMap.get(allocKey(month.period, b.id)) ?? false),
+        }),
     })),
     {
       key: OTHER,
@@ -254,11 +279,29 @@ function MonthCard({
       icon: '📦',
       color: OTHER_COLOR,
       value: c.other,
+      paid: month.other_paid,
       items: itemCount.get(allocKey(month.period, OTHER)) ?? 0,
+      toggle: () => saveMonth.mutate({ period: month.period, other_paid: !month.other_paid }),
     },
   ].filter((p) => p.value > 0)
 
+  const paidSum = parts.filter((p) => p.paid).reduce((sum, p) => sum + p.value, 0)
+  const toPay = c.total - paidSum
+  const allPaid = toPay <= 0 && month.income_paid && parts.length > 0
   const over = c.total > month.income
+
+  function payAll() {
+    buzz(BUZZ_DONE)
+    if (!month.income_paid || !month.other_paid) {
+      saveMonth.mutate({ period: month.period, income_paid: true, other_paid: true })
+    }
+    for (const b of cols) {
+      const k = allocKey(month.period, b.id)
+      if ((allocMap.get(k) ?? 0) > 0 && !paidMap.get(k)) {
+        setAlloc.mutate({ period: month.period, bucket_id: b.id, paid: true })
+      }
+    }
+  }
 
   return (
     <div
@@ -270,28 +313,48 @@ function MonthCard({
             : 'border-border bg-surface'
       }`}
     >
-      <button onClick={onSelect} className="mb-2 flex w-full items-baseline justify-between">
-        <span className="flex items-baseline gap-2">
-          <span className={`font-bold ${isNow ? 'text-rating-good' : ''}`}>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <button onClick={onSelect} className="flex min-w-0 items-baseline gap-2">
+          <span className={`truncate font-bold ${isNow ? 'text-rating-good' : ''}`}>
             {longPeriod(month.period)}
           </span>
           {isNow && (
-            <span className="rounded-full bg-rating-good/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rating-good">
+            <span className="shrink-0 rounded-full bg-rating-good/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rating-good">
               teraz
             </span>
           )}
-        </span>
-        <span className="text-sm font-bold tabular-nums">{fmtNum(month.income)} zł</span>
-      </button>
+          {allPaid && <span className="shrink-0 text-xs text-rating-good">✓</span>}
+        </button>
+        <button
+          onClick={() => {
+            buzz(month.income_paid ? BUZZ_TAP : BUZZ_DONE)
+            saveMonth.mutate({ period: month.period, income_paid: !month.income_paid })
+          }}
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-sm font-bold tabular-nums ${
+            month.income_paid
+              ? 'border-rating-good/50 bg-rating-good/10 text-rating-good'
+              : 'border-rating-bad/50 bg-rating-bad/10 text-rating-bad'
+          }`}
+          title={month.income_paid ? 'Wypłata wpłynęła' : 'Wypłaty jeszcze nie ma'}
+        >
+          {month.income_paid ? '✓' : '○'} {fmtNum(month.income)} zł
+        </button>
+      </div>
 
-      {/* pasek podziału wypłaty — flexGrow zamiast %, żeby odstępy nie rozpychały paska */}
+      {/* pasek podziału wypłaty — opłacone pełnym kolorem, reszta w paski */}
       <div className="mb-2 flex h-2.5 gap-[2px]">
         {parts.map((p) => (
           <div
             key={p.key}
             className="h-full rounded-[3px]"
-            style={{ flexGrow: p.value, flexBasis: 0, background: p.color }}
-            title={`${p.label}: ${fmtNum(p.value)} zł`}
+            style={{
+              flexGrow: p.value,
+              flexBasis: 0,
+              background: p.paid
+                ? p.color
+                : `repeating-linear-gradient(45deg, ${p.color} 0 2px, ${p.color}30 2px 5px)`,
+            }}
+            title={`${p.label}: ${fmtNum(p.value)} zł — ${p.paid ? 'opłacone' : 'do zapłaty'}`}
           />
         ))}
         {month.income > c.total && (
@@ -303,30 +366,54 @@ function MonthCard({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
         {parts.map((p) => (
-          <div key={p.key} className="flex items-center gap-1.5 text-xs">
+          <button
+            key={p.key}
+            onClick={() => {
+              buzz(p.paid ? BUZZ_TAP : BUZZ_DONE)
+              p.toggle()
+            }}
+            className="flex items-center gap-1.5 rounded-lg py-0.5 text-left text-xs hover:bg-surface2"
+            title={p.paid ? 'Opłacone — kliknij, by cofnąć' : 'Kliknij, gdy zapłacone'}
+          >
+            <span
+              className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border text-[8px] ${
+                p.paid
+                  ? 'border-rating-good bg-rating-good text-bg'
+                  : 'border-rating-bad text-transparent'
+              }`}
+            >
+              ✓
+            </span>
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: p.color }} />
-            <span className="min-w-0 flex-1 truncate text-muted">
+            <span className={`min-w-0 flex-1 truncate ${p.paid ? 'text-muted' : 'text-text'}`}>
               {p.icon} {p.label}
               {p.items > 0 && <span className="ml-1 text-[10px] text-rating-mid">•{p.items}</span>}
             </span>
             <span className="shrink-0 tabular-nums">{fmtShort(p.value)}</span>
-          </div>
+          </button>
         ))}
       </div>
 
-      <div className="mt-2 flex items-center gap-3 border-t border-border pt-2 text-[11px] text-muted">
-        <span>
-          rozdysponowane{' '}
-          <span className={`font-semibold ${over ? 'text-rating-bad' : 'text-text'}`}>
-            {fmtNum(c.total)} zł
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-2 text-[11px] text-muted">
+        {toPay > 0 ? (
+          <span>
+            do zapłaty <span className="font-semibold text-rating-bad">{fmtNum(toPay)} zł</span> z{' '}
+            <span className={over ? 'text-rating-bad' : ''}>{fmtNum(c.total)} zł</span>
           </span>
-        </span>
+        ) : (
+          <span className="font-semibold text-rating-good">wszystko opłacone</span>
+        )}
         {month.leftover != null && (
           <span>
             zostało <span className="font-semibold text-text">{fmtNum(month.leftover)} zł</span>
           </span>
+        )}
+        {!allPaid && (
+          <button onClick={payAll} className="font-semibold text-rating-good">
+            ✓ opłać wszystko
+          </button>
         )}
         <button onClick={onSelect} className="ml-auto font-semibold text-rating-good">
           {isSelected ? 'zwiń' : 'rozpisz →'}
@@ -545,6 +632,7 @@ function TableView({
   rows,
   cols,
   allocMap,
+  paidMap,
   itemCount,
   selected,
   onSelect,
@@ -552,6 +640,7 @@ function TableView({
   rows: BudgetMonth[]
   cols: BudgetBucket[]
   allocMap: AllocMap
+  paidMap: PaidMap
   itemCount: Map<string, number>
   selected: string | null
   onSelect: (p: string | null) => void
@@ -649,6 +738,10 @@ function TableView({
                 <NumCell
                   value={m.income}
                   strong
+                  paid={m.income_paid}
+                  onTogglePaid={() =>
+                    saveMonth.mutate({ period: m.period, income_paid: !m.income_paid })
+                  }
                   onSave={(v) => saveMonth.mutate({ period: m.period, income: v ?? 0 })}
                 />
                 {cols.map((b) => (
@@ -656,6 +749,14 @@ function TableView({
                     key={b.id}
                     value={allocMap.get(allocKey(m.period, b.id)) ?? null}
                     badge={itemCount.get(allocKey(m.period, b.id))}
+                    paid={paidMap.get(allocKey(m.period, b.id)) ?? false}
+                    onTogglePaid={() =>
+                      setAlloc.mutate({
+                        period: m.period,
+                        bucket_id: b.id,
+                        paid: !(paidMap.get(allocKey(m.period, b.id)) ?? false),
+                      })
+                    }
                     onSave={(v) =>
                       setAlloc.mutate({ period: m.period, bucket_id: b.id, amount: v ?? 0 })
                     }
@@ -665,6 +766,10 @@ function TableView({
                   value={c.other}
                   auto={m.other_override === null}
                   badge={itemCount.get(allocKey(m.period, OTHER))}
+                  paid={m.other_paid}
+                  onTogglePaid={() =>
+                    saveMonth.mutate({ period: m.period, other_paid: !m.other_paid })
+                  }
                   onSave={(v) => saveMonth.mutate({ period: m.period, other_override: v })}
                 />
                 <td
@@ -712,6 +817,8 @@ function NumCell({
   strong,
   auto,
   badge,
+  paid,
+  onTogglePaid,
 }: {
   value: number | null
   onSave: (v: number | null) => void
@@ -721,6 +828,9 @@ function NumCell({
   auto?: boolean
   /** liczba pozycji rozpiski wpiętych w komórkę */
   badge?: number
+  /** status opłacenia (undefined = komórka bez statusu, np. Zostało/Cash) */
+  paid?: boolean
+  onTogglePaid?: () => void
 }) {
   const [editing, setEditing] = useState(false)
 
@@ -730,8 +840,28 @@ function NumCell({
     setEditing(false)
   }
 
+  const showDot = onTogglePaid && (value ?? 0) > 0
+
   return (
     <td className="px-1 py-1 text-right">
+      <div className="flex items-center justify-end gap-1">
+        {showDot && (
+          <button
+            onClick={() => {
+              buzz(paid ? BUZZ_TAP : BUZZ_DONE)
+              onTogglePaid?.()
+            }}
+            className="shrink-0 p-0.5"
+            title={paid ? 'Opłacone — kliknij, by cofnąć' : 'Do zapłaty — kliknij, gdy zapłacone'}
+            aria-label={paid ? 'Opłacone' : 'Do zapłaty'}
+          >
+            <span
+              className={`block h-1.5 w-1.5 rounded-full ${
+                paid ? 'bg-rating-good' : 'bg-rating-bad'
+              }`}
+            />
+          </button>
+        )}
       {editing ? (
         <input
           autoFocus
@@ -748,7 +878,7 @@ function NumCell({
       ) : (
         <button
           onClick={() => setEditing(true)}
-          className={`w-full rounded-md px-1 py-0.5 text-right hover:bg-surface2 ${
+          className={`flex-1 whitespace-nowrap rounded-md px-1 py-0.5 text-right hover:bg-surface2 ${
             strong ? 'font-semibold text-rating-good' : value ? 'text-text' : 'text-muted/50'
           } ${auto ? 'italic text-muted' : ''}`}
         >
@@ -756,6 +886,7 @@ function NumCell({
           {badge ? <span className="ml-0.5 text-[9px] text-rating-mid">•{badge}</span> : null}
         </button>
       )}
+      </div>
     </td>
   )
 }
@@ -900,6 +1031,7 @@ function MonthDetail({
   month,
   buckets,
   allocMap,
+  paidMap,
   items,
   onClose,
 }: {
@@ -907,11 +1039,14 @@ function MonthDetail({
   month: BudgetMonth | undefined
   buckets: BudgetBucket[]
   allocMap: AllocMap
+  paidMap: PaidMap
   /** wszystkie pozycje (do podpowiedzi z poprzednich miesięcy) */
   items: BudgetItem[]
   onClose: () => void
 }) {
   const addItem = useAddBudgetItem()
+  const saveMonth = useSaveBudgetMonth()
+  const setAlloc = useSaveBudgetAlloc()
   const [active, setActive] = useState<string>(OTHER)
   const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
@@ -922,6 +1057,18 @@ function MonthDetail({
 
   const c = month ? rowCalc(month, buckets, allocMap) : { other: 0, bucketsSum: 0, total: 0 }
   const budget = activeBucket ? allocMap.get(allocKey(period, activeBucket.id)) ?? 0 : c.other
+  const isPaid = activeBucket
+    ? paidMap.get(allocKey(period, activeBucket.id)) ?? false
+    : month?.other_paid ?? false
+
+  function togglePaid() {
+    buzz(isPaid ? BUZZ_TAP : BUZZ_DONE)
+    if (activeBucket) {
+      setAlloc.mutate({ period, bucket_id: activeBucket.id, paid: !isPaid })
+    } else {
+      saveMonth.mutate({ period, other_paid: !isPaid })
+    }
+  }
 
   const mine = monthItems.filter((i) => (i.bucket_id ?? OTHER) === active)
   const planned = mine.reduce((s, i) => s + (i.amount ?? 0), 0)
@@ -992,8 +1139,18 @@ function MonthDetail({
         })}
       </div>
 
-      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl bg-surface2 px-3 py-2 text-xs">
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-surface2 px-3 py-2 text-xs">
         <span className="font-semibold">{activeLabel}</span>
+        <button
+          onClick={togglePaid}
+          className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+            isPaid
+              ? 'border-rating-good/50 bg-rating-good/10 text-rating-good'
+              : 'border-rating-bad/50 bg-rating-bad/10 text-rating-bad'
+          }`}
+        >
+          {isPaid ? '✓ opłacone' : '○ do zapłaty'}
+        </button>
         <span className="text-muted">
           budżet <span className="font-semibold text-text">{fmtNum(budget)} zł</span>
         </span>

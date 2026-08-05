@@ -108,7 +108,9 @@ export interface BudgetBucket {
 export interface BudgetMonth {
   period: string // 'YYYY-MM'
   income: number // pensja
+  income_paid: boolean // czy wypłata już wpłynęła
   other_override: number | null // ręczne „inne" (null = reszta pensji)
+  other_paid: boolean // czy „inne" już poszło
   leftover: number | null // zostało
   cash: number | null
   note: string | null
@@ -119,6 +121,7 @@ export interface BudgetAlloc {
   period: string
   bucket_id: string
   amount: number
+  paid: boolean // czerwony/zielony — czy ta kwota już wyszła
 }
 
 /** Rozpiska celów: co kupić / na co idzie worek (bucket_id null = „Inne"). */

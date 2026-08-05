@@ -108,7 +108,9 @@ create table if not exists budget_buckets (
 create table if not exists budget_months (
   period text primary key,             -- 'YYYY-MM'
   income numeric not null default 0,   -- pensja
+  income_paid boolean not null default false,  -- czy wypłata wpłynęła
   other_override numeric,              -- ręczne „inne" (null = reszta pensji)
+  other_paid boolean not null default false,   -- czy „inne" już poszło
   leftover numeric,                    -- zostało
   cash numeric,
   note text,
@@ -120,6 +122,7 @@ create table if not exists budget_alloc (
   period text not null,
   bucket_id uuid not null references budget_buckets (id) on delete cascade,
   amount numeric not null default 0,
+  paid boolean not null default false, -- czerwony/zielony
   unique (period, bucket_id)
 );
 

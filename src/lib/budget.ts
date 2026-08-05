@@ -81,6 +81,8 @@ export function bucketColor(index: number): string {
 // ---------- Wyliczenia wiersza -----------------------------------------
 
 export type AllocMap = Map<string, number>
+/** period|bucket → czy opłacone */
+export type PaidMap = Map<string, boolean>
 
 export function allocKey(period: string, bucketId: string): string {
   return `${period}|${bucketId}`
