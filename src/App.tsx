@@ -3,6 +3,7 @@ import { useAuth } from './lib/auth'
 import { hasSupabaseConfig } from './lib/supabase'
 import { useSync } from './lib/useSync'
 import { useReminder } from './lib/reminder'
+import Logo from './components/Logo'
 import Login from './screens/Login'
 import Today from './screens/Today'
 import Planner from './screens/Planner'
@@ -37,7 +38,7 @@ function MobileHeader() {
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-surface/95 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
       <div className="flex items-center justify-center gap-2 py-2.5">
-        <span className="text-lg leading-none">🔥</span>
+        <Logo size={22} />
         <span className="text-base font-extrabold tracking-tight">Grind Hub</span>
       </div>
     </header>
@@ -72,7 +73,7 @@ function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-border bg-surface px-4 py-6 md:flex">
       <div className="mb-8 flex items-center gap-2 px-2">
-        <span className="text-2xl">🔥</span>
+        <Logo size={30} />
         <span className="text-lg font-extrabold tracking-tight">Grind Hub</span>
       </div>
       <nav className="flex flex-col gap-1">

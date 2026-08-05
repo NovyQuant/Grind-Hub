@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react'
 import { useAuth } from '../lib/auth'
+import Logo from '../components/Logo'
 
 const EMAIL_KEY = 'gh_login_email'
 
@@ -23,7 +24,9 @@ export default function Login() {
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-6 p-6">
       <div className="text-center">
-        <div className="text-4xl">🔥</div>
+        <div className="flex justify-center">
+          <Logo size={64} />
+        </div>
         <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Grind Hub</h1>
         <p className="text-sm text-muted">Grind never stops.</p>
       </div>
