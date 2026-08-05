@@ -16,293 +16,695 @@ import {
   useDeleteBudgetItem,
 } from '../lib/queries'
 import { BudgetAlloc, BudgetBucket, BudgetItem, BudgetMonth } from '../lib/types'
-import { todayISO } from '../lib/date'
+import {
+  AllocMap,
+  OTHER_COLOR,
+  addPeriods,
+  allocKey,
+  bucketColor,
+  budgetStats,
+  currentPeriod,
+  fmtNum,
+  fmtShort,
+  itemStats,
+  longPeriod,
+  nextPeriod,
+  parseNum,
+  rowCalc,
+  shortPeriod,
+} from '../lib/budget'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 
-const MONTHS_SHORT = [
-  'sty', 'lut', 'mar', 'kwi', 'maj', 'cze',
-  'lip', 'sie', 'wrz', 'paź', 'lis', 'gru',
+type View = 'skrot' | 'tabela' | 'staty'
+
+const VIEWS: { key: View; label: string }[] = [
+  { key: 'skrot', label: '🎯 Skrót' },
+  { key: 'tabela', label: '🧮 Tabela' },
+  { key: 'staty', label: '📊 Staty' },
 ]
-const MONTHS_LONG = [
-  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
-]
 
-/** '2026-08' → 'sie 26' */
-function shortPeriod(period: string): string {
-  const [y, m] = period.split('-').map(Number)
-  return `${MONTHS_SHORT[m - 1]} ${String(y).slice(2)}`
-}
-/** '2026-08' → 'Sierpień 2026' */
-function longPeriod(period: string): string {
-  const [y, m] = period.split('-').map(Number)
-  return `${MONTHS_LONG[m - 1]} ${y}`
-}
-function nextPeriod(period: string): string {
-  const [y, m] = period.split('-').map(Number)
-  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
-}
-function currentPeriod(): string {
-  return todayISO().slice(0, 7)
-}
-
-/** '1 200,50' → number | null */
-function parseNum(s: string): number | null {
-  const t = s.trim()
-  if (t === '') return null
-  const n = parseFloat(t.replace(/\s/g, '').replace(',', '.'))
-  return Number.isNaN(n) ? null : n
-}
-
-const fmt = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 2 })
-function fmtNum(n: number): string {
-  return fmt.format(n)
-}
-
-// ====================================================================
+/** Pseudo-worek „Inne" (bucket_id = null w bazie). */
+const OTHER = 'inne'
 
 export default function Budget() {
   const buckets = useBudgetBuckets()
   const months = useBudgetMonths()
   const alloc = useBudgetAlloc()
   const items = useBudgetItems()
-  const saveMonth = useSaveBudgetMonth()
-  const setAlloc = useSaveBudgetAlloc()
 
+  const [view, setView] = useState<View>('skrot')
   const [selected, setSelected] = useState<string | null>(null)
   const [showCols, setShowCols] = useState(false)
 
   const loading = buckets.isLoading || months.isLoading || alloc.isLoading
-
   const cols = buckets.data ?? []
   const rows = months.data ?? []
   const allocs = alloc.data ?? []
   const allItems = items.data ?? []
 
-  /** period|bucket_id → kwota */
-  const allocMap = useMemo(() => {
+  const allocMap: AllocMap = useMemo(() => {
     const m = new Map<string, number>()
-    for (const a of allocs) m.set(`${a.period}|${a.bucket_id}`, a.amount)
+    for (const a of allocs) m.set(allocKey(a.period, a.bucket_id), a.amount)
     return m
   }, [allocs])
 
-  /** ile pozycji rozpiski wisi na komórce (period|bucket_id, 'null' dla Inne) */
+  /** period|bucket ('inne' dla worka Inne) → liczba pozycji rozpiski */
   const itemCount = useMemo(() => {
     const m = new Map<string, number>()
     for (const i of allItems) {
-      const k = `${i.period}|${i.bucket_id ?? 'null'}`
+      const k = allocKey(i.period, i.bucket_id ?? OTHER)
       m.set(k, (m.get(k) ?? 0) + 1)
     }
     return m
   }, [allItems])
 
-  /** Wyliczenia wiersza: suma worków, „inne" (reszta pensji lub ręczne), suma wszystkiego. */
-  function rowCalc(m: BudgetMonth) {
-    const bucketsSum = cols.reduce((s, b) => s + (allocMap.get(`${m.period}|${b.id}`) ?? 0), 0)
-    const other = m.other_override ?? Math.max(0, m.income - bucketsSum)
-    return { bucketsSum, other, total: bucketsSum + other }
+  return (
+    <div className="p-4 md:p-6">
+      <div className="mb-1 flex items-center justify-between">
+        <h1 className="text-2xl font-extrabold tracking-tight">Budżet 💰</h1>
+        {view === 'tabela' && (
+          <button
+            onClick={() => setShowCols((s) => !s)}
+            className={`rounded-full border px-3 py-1 text-xs font-medium ${
+              showCols ? 'border-rating-good/60 text-rating-good' : 'border-border text-muted'
+            }`}
+          >
+            ⚙️ Kolumny
+          </button>
+        )}
+      </div>
+      <p className="mb-3 text-sm text-muted">
+        Wypłata rozbita na worki. „Inne" to reszta — rozpisz ją na konkretne cele, a staty pokażą
+        ile średnio na co idzie.
+      </p>
+
+      <div className="mb-3 flex rounded-xl border border-border bg-surface p-1">
+        {VIEWS.map((v) => (
+          <button
+            key={v.key}
+            onClick={() => setView(v.key)}
+            className={`flex-1 rounded-lg py-2 text-sm font-semibold transition-colors ${
+              view === v.key ? 'bg-rating-good/15 text-rating-good' : 'text-muted'
+            }`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="p-6 text-muted">Ładowanie…</div>
+      ) : (
+        <>
+          {view === 'skrot' && (
+            <ShortView
+              rows={rows}
+              cols={cols}
+              allocMap={allocMap}
+              itemCount={itemCount}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          )}
+
+          {view === 'tabela' && (
+            <>
+              {showCols && <ColumnManager buckets={cols} />}
+              <TableView
+                rows={rows}
+                cols={cols}
+                allocMap={allocMap}
+                itemCount={itemCount}
+                selected={selected}
+                onSelect={setSelected}
+              />
+              <AddMonthRow months={rows} allocs={allocs} />
+            </>
+          )}
+
+          {view === 'staty' && (
+            <StatsView rows={rows} cols={cols} allocMap={allocMap} items={allItems} />
+          )}
+
+          {selected && view !== 'staty' && (
+            <MonthDetail
+              period={selected}
+              month={rows.find((m) => m.period === selected)}
+              buckets={cols}
+              allocMap={allocMap}
+              items={allItems}
+              onClose={() => setSelected(null)}
+            />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ====================================================================
+// Skrót — bieżący miesiąc ±2
+// ====================================================================
+
+function ShortView({
+  rows,
+  cols,
+  allocMap,
+  itemCount,
+  selected,
+  onSelect,
+}: {
+  rows: BudgetMonth[]
+  cols: BudgetBucket[]
+  allocMap: AllocMap
+  itemCount: Map<string, number>
+  selected: string | null
+  onSelect: (p: string | null) => void
+}) {
+  const add = useAddBudgetMonth()
+  const now = currentPeriod()
+  const window = useMemo(() => [-2, -1, 0, 1, 2].map((n) => addPeriods(now, n)), [now])
+  const byPeriod = useMemo(() => new Map(rows.map((m) => [m.period, m])), [rows])
+  const hasNow = byPeriod.has(now)
+
+  return (
+    <div>
+      {!hasNow && (
+        <div className="mb-3 flex items-center justify-between rounded-2xl border border-border bg-surface p-3">
+          <span className="text-sm text-muted">Brak wiersza na {longPeriod(now)}.</span>
+          <button
+            onClick={() => add.mutate({ period: now, income: rows[rows.length - 1]?.income ?? 0 })}
+            className="rounded-xl bg-rating-good px-3 py-1.5 text-sm font-semibold text-bg"
+          >
+            + Dodaj
+          </button>
+        </div>
+      )}
+
+      {window.map((period) => {
+        const m = byPeriod.get(period)
+        if (!m) return null
+        return (
+          <MonthCard
+            key={period}
+            month={m}
+            cols={cols}
+            allocMap={allocMap}
+            itemCount={itemCount}
+            isNow={period === now}
+            isSelected={period === selected}
+            onSelect={() => onSelect(period === selected ? null : period)}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+function MonthCard({
+  month,
+  cols,
+  allocMap,
+  itemCount,
+  isNow,
+  isSelected,
+  onSelect,
+}: {
+  month: BudgetMonth
+  cols: BudgetBucket[]
+  allocMap: AllocMap
+  itemCount: Map<string, number>
+  isNow: boolean
+  isSelected: boolean
+  onSelect: () => void
+}) {
+  const c = rowCalc(month, cols, allocMap)
+  const parts = [
+    ...cols.map((b, i) => ({
+      key: b.id,
+      label: b.label,
+      icon: b.icon,
+      color: bucketColor(i),
+      value: allocMap.get(allocKey(month.period, b.id)) ?? 0,
+      items: itemCount.get(allocKey(month.period, b.id)) ?? 0,
+    })),
+    {
+      key: OTHER,
+      label: 'Inne',
+      icon: '📦',
+      color: OTHER_COLOR,
+      value: c.other,
+      items: itemCount.get(allocKey(month.period, OTHER)) ?? 0,
+    },
+  ].filter((p) => p.value > 0)
+
+  const over = c.total > month.income
+
+  return (
+    <div
+      className={`mb-2.5 rounded-2xl border p-3 ${
+        isSelected
+          ? 'border-rating-good/50 bg-surface'
+          : isNow
+            ? 'border-rating-good/25 bg-surface'
+            : 'border-border bg-surface'
+      }`}
+    >
+      <button onClick={onSelect} className="mb-2 flex w-full items-baseline justify-between">
+        <span className="flex items-baseline gap-2">
+          <span className={`font-bold ${isNow ? 'text-rating-good' : ''}`}>
+            {longPeriod(month.period)}
+          </span>
+          {isNow && (
+            <span className="rounded-full bg-rating-good/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rating-good">
+              teraz
+            </span>
+          )}
+        </span>
+        <span className="text-sm font-bold tabular-nums">{fmtNum(month.income)} zł</span>
+      </button>
+
+      {/* pasek podziału wypłaty — flexGrow zamiast %, żeby odstępy nie rozpychały paska */}
+      <div className="mb-2 flex h-2.5 gap-[2px]">
+        {parts.map((p) => (
+          <div
+            key={p.key}
+            className="h-full rounded-[3px]"
+            style={{ flexGrow: p.value, flexBasis: 0, background: p.color }}
+            title={`${p.label}: ${fmtNum(p.value)} zł`}
+          />
+        ))}
+        {month.income > c.total && (
+          <div
+            className="h-full rounded-[3px] bg-surface2"
+            style={{ flexGrow: month.income - c.total, flexBasis: 0 }}
+            title={`Nierozdysponowane: ${fmtNum(month.income - c.total)} zł`}
+          />
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+        {parts.map((p) => (
+          <div key={p.key} className="flex items-center gap-1.5 text-xs">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: p.color }} />
+            <span className="min-w-0 flex-1 truncate text-muted">
+              {p.icon} {p.label}
+              {p.items > 0 && <span className="ml-1 text-[10px] text-rating-mid">•{p.items}</span>}
+            </span>
+            <span className="shrink-0 tabular-nums">{fmtShort(p.value)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2 flex items-center gap-3 border-t border-border pt-2 text-[11px] text-muted">
+        <span>
+          rozdysponowane{' '}
+          <span className={`font-semibold ${over ? 'text-rating-bad' : 'text-text'}`}>
+            {fmtNum(c.total)} zł
+          </span>
+        </span>
+        {month.leftover != null && (
+          <span>
+            zostało <span className="font-semibold text-text">{fmtNum(month.leftover)} zł</span>
+          </span>
+        )}
+        <button onClick={onSelect} className="ml-auto font-semibold text-rating-good">
+          {isSelected ? 'zwiń' : 'rozpisz →'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ====================================================================
+// Staty — ile średnio na co
+// ====================================================================
+
+type Range = 'do_teraz' | 'wszystko'
+
+function StatsView({
+  rows,
+  cols,
+  allocMap,
+  items,
+}: {
+  rows: BudgetMonth[]
+  cols: BudgetBucket[]
+  allocMap: AllocMap
+  items: BudgetItem[]
+}) {
+  const [range, setRange] = useState<Range>('do_teraz')
+  const [bucket, setBucket] = useState<string>(OTHER)
+  const now = currentPeriod()
+
+  const scoped = useMemo(
+    () => (range === 'wszystko' ? rows : rows.filter((m) => m.period <= now)),
+    [rows, range, now]
+  )
+  const stats = useMemo(() => budgetStats(scoped, cols, allocMap), [scoped, cols, allocMap])
+
+  const scopedItems = useMemo(() => {
+    const inRange = new Set(scoped.map((m) => m.period))
+    return items.filter(
+      (i) => inRange.has(i.period) && (bucket === 'all' || (i.bucket_id ?? OTHER) === bucket)
+    )
+  }, [items, scoped, bucket])
+  const byName = useMemo(() => itemStats(scopedItems), [scopedItems])
+  const namedTotal = byName.reduce((s, i) => s + i.total, 0)
+
+  const series = stats.series.filter((s) => s.total > 0).sort((a, b) => b.total - a.total)
+  const maxTotal = series[0]?.total ?? 0
+
+  if (stats.months === 0) {
+    return (
+      <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
+        Brak miesięcy w tym zakresie.
+      </p>
+    )
   }
 
-  const totals = useMemo(() => {
-    const t = {
-      income: 0,
-      byBucket: new Map<string, number>(),
-      other: 0,
-      total: 0,
-      leftover: 0,
-      cash: 0,
-    }
-    for (const m of rows) {
-      const c = rowCalc(m)
-      t.income += m.income
-      t.other += c.other
-      t.total += c.total
-      t.leftover += m.leftover ?? 0
-      t.cash += m.cash ?? 0
-      for (const b of cols) {
-        t.byBucket.set(b.id, (t.byBucket.get(b.id) ?? 0) + (allocMap.get(`${m.period}|${b.id}`) ?? 0))
-      }
-    }
-    return t
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, cols, allocMap])
+  return (
+    <div>
+      <div className="mb-3 flex gap-1.5">
+        {(
+          [
+            { key: 'do_teraz', label: `Do teraz (${rows.filter((m) => m.period <= now).length} msc)` },
+            { key: 'wszystko', label: `Wszystko (${rows.length} msc)` },
+          ] as { key: Range; label: string }[]
+        ).map((r) => (
+          <button
+            key={r.key}
+            onClick={() => setRange(r.key)}
+            className={`rounded-full border px-3 py-1 text-xs font-medium ${
+              range === r.key
+                ? 'border-rating-good/60 bg-rating-good/10 text-text'
+                : 'border-border text-muted'
+            }`}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
 
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        <StatTile label="Pensja / msc" value={fmtShort(stats.incomeAvg)} tone="good" />
+        <StatTile label="Wydatki / msc" value={fmtShort(stats.spendAvg)} />
+        <StatTile
+          label="Zostaje / msc"
+          value={fmtShort(stats.incomeAvg - stats.spendAvg)}
+          tone={stats.incomeAvg - stats.spendAvg < 0 ? 'bad' : undefined}
+        />
+      </div>
+
+      <div className="mb-3 rounded-2xl border border-border bg-surface p-3">
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+          Średnio na miesiąc · {stats.months} msc
+        </div>
+        {series.map((s) => (
+          <div key={s.key} className="mb-2.5">
+            <div className="mb-1 flex items-baseline gap-2 text-xs">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.color }} />
+              <span className="min-w-0 flex-1 truncate">
+                {s.icon} {s.label}
+              </span>
+              <span className="shrink-0 text-muted">{Math.round(s.share * 100)}%</span>
+              <span className="w-20 shrink-0 text-right font-semibold tabular-nums">
+                {fmtShort(s.avg)} zł
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-[3px] bg-surface2">
+              <div
+                className="h-full rounded-[3px]"
+                style={{
+                  width: `${maxTotal > 0 ? (s.total / maxTotal) * 100 : 0}%`,
+                  background: s.color,
+                }}
+                title={`${s.label}: ${fmtNum(s.total)} zł łącznie`}
+              />
+            </div>
+          </div>
+        ))}
+        <p className="mt-1 text-[11px] text-muted">
+          Słupek = łącznie w zakresie. Liczba po prawej = średnia na miesiąc.
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-surface p-3">
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+          Na co konkretnie
+        </div>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {[
+            { key: OTHER, label: '📦 Inne' },
+            ...cols.map((b) => ({ key: b.id, label: `${b.icon} ${b.label}` })),
+            { key: 'all', label: 'Wszystko' },
+          ].map((c) => (
+            <button
+              key={c.key}
+              onClick={() => setBucket(c.key)}
+              className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                bucket === c.key
+                  ? 'border-rating-good/60 bg-rating-good/10 text-text'
+                  : 'border-border text-muted'
+              }`}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+
+        {byName.length === 0 ? (
+          <p className="py-3 text-center text-sm text-muted">
+            Nic tu nie rozpisane. Wejdź w miesiąc i wpisz na co poszło.
+          </p>
+        ) : (
+          <table className="w-full text-xs tabular-nums">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wider text-muted">
+                <th className="pb-1 text-left font-semibold">Co</th>
+                <th className="pb-1 text-right font-semibold">Razy</th>
+                <th className="pb-1 text-right font-semibold">Średnio</th>
+                <th className="pb-1 text-right font-semibold">Razem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byName.map((i) => (
+                <tr key={i.key} className="border-t border-border/60">
+                  <td className="py-1.5 pr-2">
+                    <span className="line-clamp-1">{i.label}</span>
+                    <span
+                      className="mt-0.5 block h-1 rounded-[2px]"
+                      style={{
+                        width: `${namedTotal > 0 ? Math.max(2, (i.total / namedTotal) * 100) : 0}%`,
+                        background: OTHER_COLOR,
+                      }}
+                    />
+                  </td>
+                  <td className="py-1.5 text-right text-muted">{i.count}×</td>
+                  <td className="py-1.5 text-right">{fmtShort(i.avg)}</td>
+                  <td className="py-1.5 text-right font-semibold">{fmtShort(i.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StatTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  tone?: 'good' | 'bad'
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-surface p-3">
+      <div className="text-[10px] uppercase tracking-wider text-muted">{label}</div>
+      <div
+        className={`text-lg font-extrabold tabular-nums ${
+          tone === 'good' ? 'text-rating-good' : tone === 'bad' ? 'text-rating-bad' : 'text-text'
+        }`}
+      >
+        {value}
+        <span className="ml-0.5 text-[11px] font-semibold text-muted">zł</span>
+      </div>
+    </div>
+  )
+}
+
+// ====================================================================
+// Tabela — pełny arkusz
+// ====================================================================
+
+function TableView({
+  rows,
+  cols,
+  allocMap,
+  itemCount,
+  selected,
+  onSelect,
+}: {
+  rows: BudgetMonth[]
+  cols: BudgetBucket[]
+  allocMap: AllocMap
+  itemCount: Map<string, number>
+  selected: string | null
+  onSelect: (p: string | null) => void
+}) {
+  const saveMonth = useSaveBudgetMonth()
+  const setAlloc = useSaveBudgetAlloc()
   const now = currentPeriod()
   const nowRef = useRef<HTMLTableRowElement | null>(null)
   const scrolled = useRef(false)
+
   useEffect(() => {
     if (scrolled.current || !nowRef.current) return
     scrolled.current = true
     nowRef.current.scrollIntoView({ block: 'center' })
   }, [rows.length])
 
-  return (
-    <div className="p-4 md:p-6">
-      <div className="mb-1 flex items-center justify-between">
-        <h1 className="text-2xl font-extrabold tracking-tight">Budżet 💰</h1>
-        <button
-          onClick={() => setShowCols((s) => !s)}
-          className={`rounded-full border px-3 py-1 text-xs font-medium ${
-            showCols ? 'border-rating-good/60 text-rating-good' : 'border-border text-muted'
-          }`}
-        >
-          ⚙️ Kolumny
-        </button>
-      </div>
-      <p className="mb-3 text-sm text-muted">
-        Wiersz = miesiąc pensyjny. Wpisujesz pensję i ile na co idzie — „Inne" liczy się samo z
-        reszty. Kliknij miesiąc, żeby rozpisać cele.
+  const totals = useMemo(() => {
+    const t = { income: 0, byBucket: new Map<string, number>(), other: 0, total: 0, leftover: 0, cash: 0 }
+    for (const m of rows) {
+      const c = rowCalc(m, cols, allocMap)
+      t.income += m.income
+      t.other += c.other
+      t.total += c.total
+      t.leftover += m.leftover ?? 0
+      t.cash += m.cash ?? 0
+      for (const b of cols) {
+        t.byBucket.set(
+          b.id,
+          (t.byBucket.get(b.id) ?? 0) + (allocMap.get(allocKey(m.period, b.id)) ?? 0)
+        )
+      }
+    }
+    return t
+  }, [rows, cols, allocMap])
+
+  if (rows.length === 0) {
+    return (
+      <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
+        Brak miesięcy. Dodaj pierwszy poniżej.
       </p>
+    )
+  }
 
-      {showCols && <ColumnManager buckets={cols} />}
-
-      {loading ? (
-        <div className="p-6 text-muted">Ładowanie…</div>
-      ) : rows.length === 0 ? (
-        <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
-          Brak miesięcy. Dodaj pierwszy poniżej.
-        </p>
-      ) : (
-        <div className="overflow-x-auto rounded-2xl border border-border bg-surface">
-          <table className="w-full border-collapse text-xs tabular-nums">
-            <thead>
-              <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted">
-                <th className="sticky left-0 z-10 bg-surface px-2 py-2 text-left font-semibold">
-                  Msc
-                </th>
-                <th className="px-2 py-2 text-right font-semibold">Pensja</th>
-                {cols.map((b) => (
-                  <th key={b.id} className="whitespace-nowrap px-2 py-2 text-right font-semibold">
-                    {b.icon} {b.label}
-                  </th>
-                ))}
-                <th className="px-2 py-2 text-right font-semibold">📦 Inne</th>
-                <th className="px-2 py-2 text-right font-semibold">Suma</th>
-                <th className="px-2 py-2 text-right font-semibold">Zostało</th>
-                <th className="px-2 py-2 text-right font-semibold">Cash</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((m) => {
-                const c = rowCalc(m)
-                const isNow = m.period === now
-                const isSel = m.period === selected
-                const bg = isSel ? 'bg-rating-good/10' : isNow ? 'bg-surface2/60' : ''
-                const over = c.total > m.income
-                return (
-                  <tr
-                    key={m.period}
-                    ref={isNow ? nowRef : undefined}
-                    className={`border-b border-border/60 ${bg}`}
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-border bg-surface">
+      <table className="w-full border-collapse text-xs tabular-nums">
+        <thead>
+          <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted">
+            <th className="sticky left-0 z-10 bg-surface px-2 py-2 text-left font-semibold">Msc</th>
+            <th className="px-2 py-2 text-right font-semibold">Pensja</th>
+            {cols.map((b) => (
+              <th key={b.id} className="whitespace-nowrap px-2 py-2 text-right font-semibold">
+                {b.icon} {b.label}
+              </th>
+            ))}
+            <th className="px-2 py-2 text-right font-semibold">📦 Inne</th>
+            <th className="px-2 py-2 text-right font-semibold">Suma</th>
+            <th className="px-2 py-2 text-right font-semibold">Zostało</th>
+            <th className="px-2 py-2 text-right font-semibold">Cash</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((m) => {
+            const c = rowCalc(m, cols, allocMap)
+            const isNow = m.period === now
+            const isSel = m.period === selected
+            const over = c.total > m.income
+            return (
+              <tr
+                key={m.period}
+                ref={isNow ? nowRef : undefined}
+                className={`border-b border-border/60 ${
+                  isSel ? 'bg-rating-good/10' : isNow ? 'bg-surface2/60' : ''
+                }`}
+              >
+                <th
+                  scope="row"
+                  className={`sticky left-0 z-10 px-2 py-1 text-left font-semibold ${
+                    isSel ? 'bg-[#16202b]' : isNow ? 'bg-[#151d27]' : 'bg-surface'
+                  }`}
+                >
+                  <button
+                    onClick={() => {
+                      buzz(BUZZ_TAP)
+                      onSelect(isSel ? null : m.period)
+                    }}
+                    className={`whitespace-nowrap ${
+                      isSel ? 'text-rating-good' : isNow ? 'text-text' : 'text-muted'
+                    }`}
                   >
-                    <th
-                      scope="row"
-                      className={`sticky left-0 z-10 px-2 py-1 text-left font-semibold ${
-                        isSel ? 'bg-[#16202b]' : isNow ? 'bg-[#151d27]' : 'bg-surface'
-                      }`}
-                    >
-                      <button
-                        onClick={() => {
-                          buzz(BUZZ_TAP)
-                          setSelected(isSel ? null : m.period)
-                        }}
-                        className={`whitespace-nowrap ${
-                          isSel ? 'text-rating-good' : isNow ? 'text-text' : 'text-muted'
-                        }`}
-                      >
-                        {isNow && '▸ '}
-                        {shortPeriod(m.period)}
-                      </button>
-                    </th>
-                    <NumCell
-                      value={m.income}
-                      strong
-                      onSave={(v) => saveIncome(m.period, v)}
-                    />
-                    {cols.map((b) => (
-                      <NumCell
-                        key={b.id}
-                        value={allocMap.get(`${m.period}|${b.id}`) ?? null}
-                        badge={itemCount.get(`${m.period}|${b.id}`)}
-                        onSave={(v) => saveAlloc(m.period, b.id, v ?? 0)}
-                      />
-                    ))}
-                    <NumCell
-                      value={c.other}
-                      auto={m.other_override === null}
-                      badge={itemCount.get(`${m.period}|null`)}
-                      onSave={(v) => saveOther(m.period, v)}
-                    />
-                    <td
-                      className={`px-2 py-1 text-right font-semibold ${
-                        over ? 'text-rating-bad' : 'text-muted'
-                      }`}
-                    >
-                      {fmtNum(c.total)}
-                    </td>
-                    <NumCell value={m.leftover} onSave={(v) => saveLeftover(m.period, v)} />
-                    <NumCell value={m.cash} onSave={(v) => saveCash(m.period, v)} />
-                  </tr>
-                )
-              })}
-              <tr className="text-[11px] font-bold">
-                <th className="sticky left-0 z-10 bg-surface px-2 py-2 text-left uppercase tracking-wider text-muted">
-                  Suma
+                    {isNow && '▸ '}
+                    {shortPeriod(m.period)}
+                  </button>
                 </th>
-                <td className="px-2 py-2 text-right">{fmtNum(totals.income)}</td>
+                <NumCell
+                  value={m.income}
+                  strong
+                  onSave={(v) => saveMonth.mutate({ period: m.period, income: v ?? 0 })}
+                />
                 {cols.map((b) => (
-                  <td key={b.id} className="px-2 py-2 text-right">
-                    {fmtNum(totals.byBucket.get(b.id) ?? 0)}
-                  </td>
+                  <NumCell
+                    key={b.id}
+                    value={allocMap.get(allocKey(m.period, b.id)) ?? null}
+                    badge={itemCount.get(allocKey(m.period, b.id))}
+                    onSave={(v) =>
+                      setAlloc.mutate({ period: m.period, bucket_id: b.id, amount: v ?? 0 })
+                    }
+                  />
                 ))}
-                <td className="px-2 py-2 text-right">{fmtNum(totals.other)}</td>
-                <td className="px-2 py-2 text-right">{fmtNum(totals.total)}</td>
-                <td className="px-2 py-2 text-right">{fmtNum(totals.leftover)}</td>
-                <td className="px-2 py-2 text-right">{fmtNum(totals.cash)}</td>
+                <NumCell
+                  value={c.other}
+                  auto={m.other_override === null}
+                  badge={itemCount.get(allocKey(m.period, OTHER))}
+                  onSave={(v) => saveMonth.mutate({ period: m.period, other_override: v })}
+                />
+                <td
+                  className={`px-2 py-1 text-right font-semibold ${
+                    over ? 'text-rating-bad' : 'text-muted'
+                  }`}
+                >
+                  {fmtNum(c.total)}
+                </td>
+                <NumCell
+                  value={m.leftover}
+                  onSave={(v) => saveMonth.mutate({ period: m.period, leftover: v })}
+                />
+                <NumCell
+                  value={m.cash}
+                  onSave={(v) => saveMonth.mutate({ period: m.period, cash: v })}
+                />
               </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <AddMonthRow months={rows} allocs={allocs} />
-
-      {selected && (
-        <MonthDetail
-          period={selected}
-          month={rows.find((m) => m.period === selected)}
-          buckets={cols}
-          allocMap={allocMap}
-          items={allItems.filter((i) => i.period === selected)}
-          onClose={() => setSelected(null)}
-        />
-      )}
+            )
+          })}
+          <tr className="text-[11px] font-bold">
+            <th className="sticky left-0 z-10 bg-surface px-2 py-2 text-left uppercase tracking-wider text-muted">
+              Suma
+            </th>
+            <td className="px-2 py-2 text-right">{fmtNum(totals.income)}</td>
+            {cols.map((b) => (
+              <td key={b.id} className="px-2 py-2 text-right">
+                {fmtNum(totals.byBucket.get(b.id) ?? 0)}
+              </td>
+            ))}
+            <td className="px-2 py-2 text-right">{fmtNum(totals.other)}</td>
+            <td className="px-2 py-2 text-right">{fmtNum(totals.total)}</td>
+            <td className="px-2 py-2 text-right">{fmtNum(totals.leftover)}</td>
+            <td className="px-2 py-2 text-right">{fmtNum(totals.cash)}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   )
-
-  // --- zapisy komórek -------------------------------------------------
-
-  function saveIncome(period: string, v: number | null) {
-    saveMonth.mutate({ period, income: v ?? 0 })
-  }
-  function saveOther(period: string, v: number | null) {
-    // puste = wróć do automatu (reszta pensji)
-    saveMonth.mutate({ period, other_override: v })
-  }
-  function saveLeftover(period: string, v: number | null) {
-    saveMonth.mutate({ period, leftover: v })
-  }
-  function saveCash(period: string, v: number | null) {
-    saveMonth.mutate({ period, cash: v })
-  }
-  function saveAlloc(period: string, bucket_id: string, amount: number) {
-    setAlloc.mutate({ period, bucket_id, amount })
-  }
 }
-
-// ====================================================================
-// Komórka z kwotą — tap → input
-// ====================================================================
 
 function NumCell({
   value,
@@ -437,8 +839,9 @@ function ColumnManager({ buckets }: { buckets: BudgetBucket[] }) {
       <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
         Kolumny tabeli
       </div>
-      {buckets.map((b) => (
+      {buckets.map((b, i) => (
         <div key={b.id} className="mb-1.5 flex items-center gap-2">
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: bucketColor(i) }} />
           <input
             defaultValue={b.icon}
             onBlur={(e) => e.target.value !== b.icon && update.mutate({ id: b.id, icon: e.target.value })}
@@ -492,8 +895,6 @@ function ColumnManager({ buckets }: { buckets: BudgetBucket[] }) {
 // Rozpiska miesiąca — cele / co kupić
 // ====================================================================
 
-const OTHER = 'inne' // pseudo-worek: bucket_id = null
-
 function MonthDetail({
   period,
   month,
@@ -505,7 +906,8 @@ function MonthDetail({
   period: string
   month: BudgetMonth | undefined
   buckets: BudgetBucket[]
-  allocMap: Map<string, number>
+  allocMap: AllocMap
+  /** wszystkie pozycje (do podpowiedzi z poprzednich miesięcy) */
   items: BudgetItem[]
   onClose: () => void
 }) {
@@ -514,16 +916,24 @@ function MonthDetail({
   const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
 
-  const bucketsSum = buckets.reduce((s, b) => s + (allocMap.get(`${period}|${b.id}`) ?? 0), 0)
-  const other = month ? month.other_override ?? Math.max(0, month.income - bucketsSum) : 0
-
+  const monthItems = items.filter((i) => i.period === period)
   const activeBucket = buckets.find((b) => b.id === active)
   const activeLabel = activeBucket ? `${activeBucket.icon} ${activeBucket.label}` : '📦 Inne'
-  const budget = activeBucket ? allocMap.get(`${period}|${activeBucket.id}`) ?? 0 : other
 
-  const mine = items.filter((i) => (i.bucket_id ?? OTHER) === active)
+  const c = month ? rowCalc(month, buckets, allocMap) : { other: 0, bucketsSum: 0, total: 0 }
+  const budget = activeBucket ? allocMap.get(allocKey(period, activeBucket.id)) ?? 0 : c.other
+
+  const mine = monthItems.filter((i) => (i.bucket_id ?? OTHER) === active)
   const planned = mine.reduce((s, i) => s + (i.amount ?? 0), 0)
   const rest = budget - planned
+
+  // podpowiedzi: nazwy z poprzednich miesięcy w tym worku, jeszcze nie użyte tutaj
+  const suggestions = useMemo(() => {
+    const used = new Set(mine.map((i) => i.title.trim().toLowerCase()))
+    return itemStats(items.filter((i) => i.period !== period && (i.bucket_id ?? OTHER) === active))
+      .filter((s) => !used.has(s.key))
+      .slice(0, 6)
+  }, [items, period, active, mine])
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -555,28 +965,34 @@ function MonthDetail({
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1.5">
-        {[...buckets.map((b) => ({ key: b.id, label: `${b.icon} ${b.label}` })), { key: OTHER, label: '📦 Inne' }].map(
-          (c) => {
-            const n = items.filter((i) => (i.bucket_id ?? OTHER) === c.key).length
-            return (
-              <button
-                key={c.key}
-                onClick={() => setActive(c.key)}
-                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
-                  active === c.key
-                    ? 'border-rating-good/60 bg-rating-good/10 text-text'
-                    : 'border-border text-muted'
-                }`}
-              >
-                {c.label}
-                {n > 0 && <span className="ml-1 text-[10px] text-rating-mid">{n}</span>}
-              </button>
-            )
-          }
-        )}
+        {[
+          { key: OTHER, label: '📦 Inne', color: OTHER_COLOR },
+          ...buckets.map((b, i) => ({
+            key: b.id,
+            label: `${b.icon} ${b.label}`,
+            color: bucketColor(i),
+          })),
+        ].map((c2) => {
+          const n = monthItems.filter((i) => (i.bucket_id ?? OTHER) === c2.key).length
+          return (
+            <button
+              key={c2.key}
+              onClick={() => setActive(c2.key)}
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                active === c2.key
+                  ? 'border-rating-good/60 bg-rating-good/10 text-text'
+                  : 'border-border text-muted'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full" style={{ background: c2.color }} />
+              {c2.label}
+              {n > 0 && <span className="text-[10px] text-rating-mid">{n}</span>}
+            </button>
+          )
+        })}
       </div>
 
-      <div className="mb-2 flex items-baseline gap-3 rounded-xl bg-surface2 px-3 py-2 text-xs">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl bg-surface2 px-3 py-2 text-xs">
         <span className="font-semibold">{activeLabel}</span>
         <span className="text-muted">
           budżet <span className="font-semibold text-text">{fmtNum(budget)} zł</span>
@@ -608,6 +1024,25 @@ function MonthDetail({
           +
         </button>
       </form>
+
+      {suggestions.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-muted">częste:</span>
+          {suggestions.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => {
+                setTitle(s.label)
+                if (s.avg > 0) setAmount(String(Math.round(s.avg)))
+              }}
+              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted hover:border-rating-good/60 hover:text-rating-good"
+              title={`${s.count}× · średnio ${fmtShort(s.avg)} zł`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {mine.length === 0 ? (
         <p className="py-3 text-center text-sm text-muted">
