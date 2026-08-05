@@ -88,6 +88,20 @@ export default function Budget() {
     return m
   }, [allItems])
 
+  function renderDetail(period: string) {
+    return (
+      <MonthDetail
+        period={period}
+        month={rows.find((m) => m.period === period)}
+        buckets={cols}
+        allocMap={allocMap}
+        paidMap={paidMap}
+        items={allItems}
+        onClose={() => setSelected(null)}
+      />
+    )
+  }
+
   return (
     <div className="p-4 md:p-6">
       <div className="mb-1 flex items-center justify-between">
@@ -136,6 +150,7 @@ export default function Budget() {
         <div className="p-6 text-muted">Ładowanie…</div>
       ) : (
         <>
+          {/* jeden panel rozpiski, wstrzykiwany tam gdzie pasuje do widoku */}
           {view === 'skrot' && (
             <ShortView
               rows={rows}
@@ -146,6 +161,7 @@ export default function Budget() {
               selected={selected}
               onSelect={setSelected}
               onFill={setFillFrom}
+              renderDetail={renderDetail}
             />
           )}
 
@@ -170,17 +186,7 @@ export default function Budget() {
             <StatsView rows={rows} cols={cols} allocMap={allocMap} items={allItems} />
           )}
 
-          {selected && view !== 'staty' && (
-            <MonthDetail
-              period={selected}
-              month={rows.find((m) => m.period === selected)}
-              buckets={cols}
-              allocMap={allocMap}
-              paidMap={paidMap}
-              items={allItems}
-              onClose={() => setSelected(null)}
-            />
-          )}
+          {selected && view === 'tabela' && renderDetail(selected)}
         </>
       )}
     </div>
@@ -291,6 +297,7 @@ function ShortView({
   selected,
   onSelect,
   onFill,
+  renderDetail,
 }: {
   rows: BudgetMonth[]
   cols: BudgetBucket[]
@@ -300,6 +307,8 @@ function ShortView({
   selected: string | null
   onSelect: (p: string | null) => void
   onFill: (p: string) => void
+  /** panel rozpiski renderowany pod wybraną kartą */
+  renderDetail: (period: string) => React.ReactNode
 }) {
   const add = useAddBudgetMonth()
   const now = currentPeriod()
@@ -325,18 +334,20 @@ function ShortView({
         const m = byPeriod.get(period)
         if (!m) return null
         return (
-          <MonthCard
-            key={period}
-            month={m}
-            cols={cols}
-            allocMap={allocMap}
-            paidMap={paidMap}
-            itemCount={itemCount}
-            isNow={period === now}
-            isSelected={period === selected}
-            onSelect={() => onSelect(period === selected ? null : period)}
-            onFill={() => onFill(period)}
-          />
+          <div key={period}>
+            <MonthCard
+              month={m}
+              cols={cols}
+              allocMap={allocMap}
+              paidMap={paidMap}
+              itemCount={itemCount}
+              isNow={period === now}
+              isSelected={period === selected}
+              onSelect={() => onSelect(period === selected ? null : period)}
+              onFill={() => onFill(period)}
+            />
+            {period === selected && <div className="mb-4">{renderDetail(period)}</div>}
+          </div>
         )
       })}
     </div>
@@ -394,7 +405,7 @@ function MonthCard({
       items: itemCount.get(allocKey(month.period, OTHER)) ?? 0,
       toggle: () => saveMonth.mutate({ period: month.period, other_paid: !month.other_paid }),
     },
-  ].filter((p) => p.value > 0)
+  ].filter((p) => p.value > 0 || p.key === OTHER) // Inne zostaje nawet przy 0 zl
 
   const paidSum = parts.filter((p) => p.paid).reduce((sum, p) => sum + p.value, 0)
   const toPay = c.total - paidSum
@@ -482,6 +493,10 @@ function MonthCard({
           <button
             key={p.key}
             onClick={() => {
+              if (p.value <= 0) {
+                onSelect()
+                return
+              }
               buzz(p.paid ? BUZZ_TAP : BUZZ_DONE)
               p.toggle()
             }}
@@ -490,9 +505,11 @@ function MonthCard({
           >
             <span
               className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border text-[8px] ${
-                p.paid
-                  ? 'border-rating-good bg-rating-good text-bg'
-                  : 'border-rating-bad text-transparent'
+                p.value <= 0
+                  ? 'border-border text-transparent'
+                  : p.paid
+                    ? 'border-rating-good bg-rating-good text-bg'
+                    : 'border-rating-bad text-transparent'
               }`}
             >
               ✓
@@ -530,7 +547,7 @@ function MonthCard({
           ↓ kopiuj dalej
         </button>
         <button onClick={onSelect} className="ml-auto font-semibold text-rating-good">
-          {isSelected ? 'zwiń' : 'rozpisz →'}
+          {isSelected ? 'zwiń rozpiskę' : '📦 rozpisz →'}
         </button>
       </div>
     </div>
@@ -1173,6 +1190,7 @@ function MonthDetail({
   const saveMonth = useSaveBudgetMonth()
   const setAlloc = useSaveBudgetAlloc()
   const [active, setActive] = useState<string>(OTHER)
+  const [editBudget, setEditBudget] = useState(false)
   const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
 
@@ -1185,6 +1203,17 @@ function MonthDetail({
   const isPaid = activeBucket
     ? paidMap.get(allocKey(period, activeBucket.id)) ?? false
     : month?.other_paid ?? false
+
+  /** Kwota worka: dla Inne to ręczne nadpisanie reszty, dla reszty zwykła alokacja. */
+  function saveBudget(raw: string) {
+    const v = parseNum(raw)
+    if (activeBucket) {
+      if ((v ?? 0) !== budget) setAlloc.mutate({ period, bucket_id: activeBucket.id, amount: v ?? 0 })
+    } else if (v !== month?.other_override) {
+      saveMonth.mutate({ period, other_override: v })
+    }
+    setEditBudget(false)
+  }
 
   function togglePaid() {
     buzz(isPaid ? BUZZ_TAP : BUZZ_DONE)
@@ -1277,7 +1306,29 @@ function MonthDetail({
           {isPaid ? '✓ opłacone' : '○ do zapłaty'}
         </button>
         <span className="text-muted">
-          budżet <span className="font-semibold text-text">{fmtNum(budget)} zł</span>
+          budżet{' '}
+          {editBudget ? (
+            <input
+              autoFocus
+              inputMode="decimal"
+              defaultValue={budget || ''}
+              onFocus={(e) => e.target.select()}
+              onBlur={(e) => saveBudget(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveBudget((e.target as HTMLInputElement).value)
+                if (e.key === 'Escape') setEditBudget(false)
+              }}
+              className="w-20 rounded-md border border-rating-good bg-surface px-1.5 py-0.5 text-right text-xs tabular-nums outline-none"
+            />
+          ) : (
+            <button
+              onClick={() => setEditBudget(true)}
+              className="font-semibold text-text underline decoration-dotted underline-offset-2"
+              title="Zmień kwotę tego worka"
+            >
+              {fmtNum(budget)} zł
+            </button>
+          )}
         </span>
         <span className="text-muted">
           rozpisane <span className="font-semibold text-text">{fmtNum(planned)} zł</span>
@@ -1324,6 +1375,14 @@ function MonthDetail({
             </button>
           ))}
         </div>
+      )}
+
+      {budget === 0 && !activeBucket && (
+        <p className="mb-2 rounded-xl border border-border bg-surface2 px-3 py-2 text-[11px] text-muted">
+          Inne wychodzi 0 zł — cała pensja jest już rozdzielona na worki. Kliknij kwotę wyżej i
+          wpisz ile zostawiasz na Inne (suma przekroczy wtedy pensję), albo zmniejsz któryś worek
+          w tabeli.
+        </p>
       )}
 
       {mine.length === 0 ? (
