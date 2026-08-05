@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import {
   Abstinence,
-  BudgetEntry,
-  BudgetKind,
+  BudgetAlloc,
+  BudgetBucket,
+  BudgetItem,
+  BudgetMonth,
   CalendarEvent,
   Habit,
   Log,
@@ -375,87 +377,280 @@ export function useDeleteEvent() {
   })
 }
 
-// ---------- Budżet -----------------------------------------------------
+// ---------- Budżet: tabela miesięczna ----------------------------------
 
-export function useBudget() {
+const BUDGET_KEYS = [['budget_buckets'], ['budget_months'], ['budget_alloc'], ['budget_items']]
+
+function invalidateBudget(qc: ReturnType<typeof useQueryClient>) {
+  for (const key of BUDGET_KEYS) qc.invalidateQueries({ queryKey: key })
+}
+
+export function useBudgetBuckets() {
   return useQuery({
-    queryKey: ['budget'],
-    queryFn: async (): Promise<BudgetEntry[]> => {
+    queryKey: ['budget_buckets'],
+    queryFn: async (): Promise<BudgetBucket[]> => {
       const { data, error } = await supabase
-        .from('budget_entries')
+        .from('budget_buckets')
         .select('*')
-        .order('entry_date', { ascending: false })
-        .order('created_at', { ascending: false })
+        .eq('archived', false)
+        .order('sort_order', { ascending: true })
       if (error) throw error
-      return (data ?? []).map((e) => ({ ...e, amount: Number(e.amount) })) as BudgetEntry[]
+      return (data ?? []) as BudgetBucket[]
     },
   })
 }
 
-export type NewBudgetEntry = {
-  entry_date: string
-  kind: BudgetKind
-  amount: number
-  title: string
-  category: string | null
-  planned: boolean
-}
-
-export function useAddBudgetEntry() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: async (input: NewBudgetEntry) => {
-      const { error } = await supabase
-        .from('budget_entries')
-        .insert({ ...input, title: input.title.trim() })
+export function useBudgetMonths() {
+  return useQuery({
+    queryKey: ['budget_months'],
+    queryFn: async (): Promise<BudgetMonth[]> => {
+      const { data, error } = await supabase
+        .from('budget_months')
+        .select('*')
+        .order('period', { ascending: true })
       if (error) throw error
+      return (data ?? []).map((m) => ({
+        ...m,
+        income: Number(m.income),
+        other_override: m.other_override == null ? null : Number(m.other_override),
+        leftover: m.leftover == null ? null : Number(m.leftover),
+        cash: m.cash == null ? null : Number(m.cash),
+      })) as BudgetMonth[]
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget'] }),
   })
 }
 
-type BudgetPatch = Partial<Pick<BudgetEntry, 'amount' | 'title' | 'category' | 'planned' | 'kind' | 'entry_date'>>
+export function useBudgetAlloc() {
+  return useQuery({
+    queryKey: ['budget_alloc'],
+    queryFn: async (): Promise<BudgetAlloc[]> => {
+      const { data, error } = await supabase.from('budget_alloc').select('*')
+      if (error) throw error
+      return (data ?? []).map((a) => ({ ...a, amount: Number(a.amount) })) as BudgetAlloc[]
+    },
+  })
+}
 
-export function useUpdateBudgetEntry() {
+export function useBudgetItems() {
+  return useQuery({
+    queryKey: ['budget_items'],
+    queryFn: async (): Promise<BudgetItem[]> => {
+      const { data, error } = await supabase
+        .from('budget_items')
+        .select('*')
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      return (data ?? []).map((i) => ({
+        ...i,
+        amount: i.amount == null ? null : Number(i.amount),
+      })) as BudgetItem[]
+    },
+  })
+}
+
+/** Zapis komórki miesiąca (pensja / inne / zostało / cash). */
+export function useSaveBudgetMonth() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { id: string } & BudgetPatch) => {
-      const { id, ...patch } = input
-      const { error } = await supabase.from('budget_entries').update(patch).eq('id', id)
+    mutationFn: async (input: { period: string } & Partial<Omit<BudgetMonth, 'period'>>) => {
+      const { error } = await supabase.from('budget_months').upsert(input, { onConflict: 'period' })
       if (error) throw error
     },
     onMutate: async (input) => {
-      await qc.cancelQueries({ queryKey: ['budget'] })
-      const prev = qc.getQueryData<BudgetEntry[]>(['budget']) ?? []
-      qc.setQueryData<BudgetEntry[]>(
-        ['budget'],
-        prev.map((e) => (e.id === input.id ? { ...e, ...input } : e))
+      await qc.cancelQueries({ queryKey: ['budget_months'] })
+      const prev = qc.getQueryData<BudgetMonth[]>(['budget_months']) ?? []
+      const exists = prev.some((m) => m.period === input.period)
+      qc.setQueryData<BudgetMonth[]>(
+        ['budget_months'],
+        exists
+          ? prev.map((m) => (m.period === input.period ? { ...m, ...input } : m))
+          : [
+              ...prev,
+              {
+                income: 0,
+                other_override: null,
+                leftover: null,
+                cash: null,
+                note: null,
+                ...input,
+              } as BudgetMonth,
+            ].sort((a, b) => a.period.localeCompare(b.period))
       )
       return { prev }
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['budget'], ctx.prev)
+      if (ctx?.prev) qc.setQueryData(['budget_months'], ctx.prev)
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['budget'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['budget_months'] }),
   })
 }
 
-export function useDeleteBudgetEntry() {
+/** Zapis komórki worka w danym miesiącu. */
+export function useSaveBudgetAlloc() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('budget_entries').delete().eq('id', id)
+    mutationFn: async (input: { period: string; bucket_id: string; amount: number }) => {
+      const { error } = await supabase
+        .from('budget_alloc')
+        .upsert(input, { onConflict: 'period,bucket_id' })
       if (error) throw error
     },
-    onMutate: async (id) => {
-      await qc.cancelQueries({ queryKey: ['budget'] })
-      const prev = qc.getQueryData<BudgetEntry[]>(['budget']) ?? []
-      qc.setQueryData<BudgetEntry[]>(['budget'], prev.filter((e) => e.id !== id))
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['budget_alloc'] })
+      const prev = qc.getQueryData<BudgetAlloc[]>(['budget_alloc']) ?? []
+      const hit = prev.find((a) => a.period === input.period && a.bucket_id === input.bucket_id)
+      qc.setQueryData<BudgetAlloc[]>(
+        ['budget_alloc'],
+        hit
+          ? prev.map((a) => (a === hit ? { ...a, amount: input.amount } : a))
+          : [...prev, { id: `tmp-${input.period}-${input.bucket_id}`, ...input }]
+      )
       return { prev }
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['budget'], ctx.prev)
+      if (ctx?.prev) qc.setQueryData(['budget_alloc'], ctx.prev)
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['budget'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['budget_alloc'] }),
+  })
+}
+
+/** Nowy miesiąc — opcjonalnie z przepisanymi alokacjami poprzedniego. */
+export function useAddBudgetMonth() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { period: string; income: number; copyFrom?: BudgetAlloc[] }) => {
+      const { error } = await supabase
+        .from('budget_months')
+        .upsert({ period: input.period, income: input.income }, { onConflict: 'period' })
+      if (error) throw error
+      const rows = (input.copyFrom ?? []).map((a) => ({
+        period: input.period,
+        bucket_id: a.bucket_id,
+        amount: a.amount,
+      }))
+      if (rows.length > 0) {
+        const { error: e2 } = await supabase
+          .from('budget_alloc')
+          .upsert(rows, { onConflict: 'period,bucket_id' })
+        if (e2) throw e2
+      }
+    },
+    onSuccess: () => invalidateBudget(qc),
+  })
+}
+
+export function useDeleteBudgetMonth() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (period: string) => {
+      await supabase.from('budget_alloc').delete().eq('period', period)
+      await supabase.from('budget_items').delete().eq('period', period)
+      const { error } = await supabase.from('budget_months').delete().eq('period', period)
+      if (error) throw error
+    },
+    onSuccess: () => invalidateBudget(qc),
+  })
+}
+
+// --- worki (kolumny tabeli) ---
+
+export function useAddBudgetBucket() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { label: string; icon: string; sort_order: number }) => {
+      const { error } = await supabase.from('budget_buckets').insert(input)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget_buckets'] }),
+  })
+}
+
+export function useUpdateBudgetBucket() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { id: string } & Partial<Omit<BudgetBucket, 'id'>>) => {
+      const { id, ...patch } = input
+      const { error } = await supabase.from('budget_buckets').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget_buckets'] }),
+  })
+}
+
+/** Usuwa kolumnę razem z jej kwotami i rozpiską (cascade). */
+export function useDeleteBudgetBucket() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('budget_buckets').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => invalidateBudget(qc),
+  })
+}
+
+// --- rozpiska (cele / co kupić) ---
+
+export function useAddBudgetItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: {
+      period: string
+      bucket_id: string | null
+      title: string
+      amount: number | null
+    }) => {
+      const { error } = await supabase
+        .from('budget_items')
+        .insert({ ...input, title: input.title.trim() })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget_items'] }),
+  })
+}
+
+export function useUpdateBudgetItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (
+      input: { id: string } & Partial<Pick<BudgetItem, 'title' | 'amount' | 'done' | 'bucket_id'>>
+    ) => {
+      const { id, ...patch } = input
+      const { error } = await supabase.from('budget_items').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['budget_items'] })
+      const prev = qc.getQueryData<BudgetItem[]>(['budget_items']) ?? []
+      qc.setQueryData<BudgetItem[]>(
+        ['budget_items'],
+        prev.map((i) => (i.id === input.id ? { ...i, ...input } : i))
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['budget_items'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['budget_items'] }),
+  })
+}
+
+export function useDeleteBudgetItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('budget_items').delete().eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['budget_items'] })
+      const prev = qc.getQueryData<BudgetItem[]>(['budget_items']) ?? []
+      qc.setQueryData<BudgetItem[]>(['budget_items'], prev.filter((i) => i.id !== id))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['budget_items'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['budget_items'] }),
   })
 }

@@ -95,15 +95,42 @@ create table if not exists shopping_items (
   created_at timestamptz default now()
 );
 
--- Budżet: wpływy i wydatki (kind 'in'|'out'), planned = dopiero pójdzie
-create table if not exists budget_entries (
+-- Budżet: tabela miesięczna (wiersz = miesiąc, kolumny = worki)
+create table if not exists budget_buckets (
   id uuid primary key default gen_random_uuid(),
-  entry_date date not null default current_date,
-  kind text not null default 'out',        -- 'in' | 'out'
-  amount numeric not null,                 -- zawsze dodatnia
-  title text not null default '',          -- na co (puste = ogólna kwota)
-  category text,                           -- klucz kategorii, null = bez
-  planned boolean not null default false,  -- true = plan, false = fakt
+  label text not null,
+  icon text not null default '📦',
+  sort_order int not null default 0,
+  archived boolean not null default false,
+  created_at timestamptz default now()
+);
+
+create table if not exists budget_months (
+  period text primary key,             -- 'YYYY-MM'
+  income numeric not null default 0,   -- pensja
+  other_override numeric,              -- ręczne „inne" (null = reszta pensji)
+  leftover numeric,                    -- zostało
+  cash numeric,
+  note text,
+  created_at timestamptz default now()
+);
+
+create table if not exists budget_alloc (
+  id uuid primary key default gen_random_uuid(),
+  period text not null,
+  bucket_id uuid not null references budget_buckets (id) on delete cascade,
+  amount numeric not null default 0,
+  unique (period, bucket_id)
+);
+
+-- Rozpiska celów („co kupić"); bucket_id null = worek „Inne"
+create table if not exists budget_items (
+  id uuid primary key default gen_random_uuid(),
+  period text not null,
+  bucket_id uuid references budget_buckets (id) on delete cascade,
+  title text not null,
+  amount numeric,
+  done boolean not null default false,
   note text,
   created_at timestamptz default now()
 );
@@ -112,7 +139,8 @@ create index if not exists logs_date_idx on logs (log_date);
 create index if not exists snapshots_area_idx on attribute_snapshots (area, snap_date);
 create index if not exists tasks_due_idx on tasks (due_date);
 create index if not exists events_date_idx on events (event_date);
-create index if not exists budget_entries_date_idx on budget_entries (entry_date);
+create index if not exists budget_alloc_period_idx on budget_alloc (period);
+create index if not exists budget_items_period_idx on budget_items (period);
 
 -- ---------- Row Level Security ---------------------------------------
 alter table habits enable row level security;
@@ -123,7 +151,10 @@ alter table abstinences enable row level security;
 alter table tasks enable row level security;
 alter table events enable row level security;
 alter table shopping_items enable row level security;
-alter table budget_entries enable row level security;
+alter table budget_buckets enable row level security;
+alter table budget_months enable row level security;
+alter table budget_alloc enable row level security;
+alter table budget_items enable row level security;
 
 create policy "auth full habits" on habits for all to authenticated using (true) with check (true);
 create policy "auth full logs" on logs for all to authenticated using (true) with check (true);
@@ -133,7 +164,10 @@ create policy "auth full abstinences" on abstinences for all to authenticated us
 create policy "auth full tasks" on tasks for all to authenticated using (true) with check (true);
 create policy "auth full events" on events for all to authenticated using (true) with check (true);
 create policy "auth full shopping" on shopping_items for all to authenticated using (true) with check (true);
-create policy "auth full budget" on budget_entries for all to authenticated using (true) with check (true);
+create policy "auth full budget_buckets" on budget_buckets for all to authenticated using (true) with check (true);
+create policy "auth full budget_months" on budget_months for all to authenticated using (true) with check (true);
+create policy "auth full budget_alloc" on budget_alloc for all to authenticated using (true) with check (true);
+create policy "auth full budget_items" on budget_items for all to authenticated using (true) with check (true);
 
 -- ---------- Seed nawyków ---------------------------------------------
 insert into habits

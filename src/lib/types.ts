@@ -96,48 +96,41 @@ export interface CalendarEvent {
   created_at: string
 }
 
-// Budżet: 'in' = wpłynęło (wypłata, zwrot), 'out' = wyszło (wydatek)
-export type BudgetKind = 'in' | 'out'
-
-export interface BudgetEntry {
+// Budżet — tabela miesięczna: wiersz = miesiąc, kolumny = worki (buckets).
+export interface BudgetBucket {
   id: string
-  entry_date: string // YYYY-MM-DD
-  kind: BudgetKind
-  amount: number // zawsze dodatnia, znak bierze się z kind
-  title: string // na co (może być puste = ogólna kwota)
-  category: string | null
-  planned: boolean // true = dopiero pójdzie, false = już poszło
-  note: string | null
-  created_at: string
-}
-
-export interface BudgetCategory {
-  key: string
   label: string
   icon: string
-  kind: BudgetKind
+  sort_order: number
+  archived: boolean
 }
 
-export const BUDGET_CATEGORIES: BudgetCategory[] = [
-  // wpływy
-  { key: 'wyplata', label: 'Wypłata', icon: '💰', kind: 'in' },
-  { key: 'premia', label: 'Premia', icon: '🎁', kind: 'in' },
-  { key: 'zwrot', label: 'Zwrot', icon: '↩️', kind: 'in' },
-  { key: 'inne_in', label: 'Inne', icon: '➕', kind: 'in' },
-  // wydatki
-  { key: 'jedzenie', label: 'Jedzenie', icon: '🍔', kind: 'out' },
-  { key: 'dom', label: 'Dom', icon: '🏠', kind: 'out' },
-  { key: 'rachunki', label: 'Rachunki', icon: '🧾', kind: 'out' },
-  { key: 'transport', label: 'Transport', icon: '🚗', kind: 'out' },
-  { key: 'zdrowie', label: 'Zdrowie', icon: '💊', kind: 'out' },
-  { key: 'rozrywka', label: 'Rozrywka', icon: '🎮', kind: 'out' },
-  { key: 'zakupy', label: 'Zakupy', icon: '🛒', kind: 'out' },
-  { key: 'oszczednosci', label: 'Oszczędności', icon: '🐷', kind: 'out' },
-  { key: 'inne_out', label: 'Inne', icon: '📦', kind: 'out' },
-]
+export interface BudgetMonth {
+  period: string // 'YYYY-MM'
+  income: number // pensja
+  other_override: number | null // ręczne „inne" (null = reszta pensji)
+  leftover: number | null // zostało
+  cash: number | null
+  note: string | null
+}
 
-export function budgetCategory(key: string | null): BudgetCategory | null {
-  return BUDGET_CATEGORIES.find((c) => c.key === key) ?? null
+export interface BudgetAlloc {
+  id: string
+  period: string
+  bucket_id: string
+  amount: number
+}
+
+/** Rozpiska celów: co kupić / na co idzie worek (bucket_id null = „Inne"). */
+export interface BudgetItem {
+  id: string
+  period: string
+  bucket_id: string | null
+  title: string
+  amount: number | null
+  done: boolean
+  note: string | null
+  created_at: string
 }
 
 // scale3 wartości
