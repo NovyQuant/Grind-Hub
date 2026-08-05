@@ -8,6 +8,7 @@ import {
   useSaveBudgetAlloc,
   useAddBudgetMonth,
   useDeleteBudgetMonth,
+  useFillDownBudget,
   useAddBudgetBucket,
   useUpdateBudgetBucket,
   useDeleteBudgetBucket,
@@ -35,6 +36,7 @@ import {
   shortPeriod,
 } from '../lib/budget'
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
+import { useToast } from '../components/Toast'
 
 type View = 'skrot' | 'tabela' | 'staty'
 
@@ -55,6 +57,7 @@ export default function Budget() {
 
   const [view, setView] = useState<View>('skrot')
   const [selected, setSelected] = useState<string | null>(null)
+  const [fillFrom, setFillFrom] = useState<string | null>(null)
   const [showCols, setShowCols] = useState(false)
 
   const loading = buckets.isLoading || months.isLoading || alloc.isLoading
@@ -119,6 +122,16 @@ export default function Budget() {
         ))}
       </div>
 
+      {fillFrom && view !== 'staty' && (
+        <FillDownBar
+          from={fillFrom}
+          rows={rows}
+          cols={cols}
+          allocMap={allocMap}
+          onClose={() => setFillFrom(null)}
+        />
+      )}
+
       {loading ? (
         <div className="p-6 text-muted">Ładowanie…</div>
       ) : (
@@ -132,6 +145,7 @@ export default function Budget() {
               itemCount={itemCount}
               selected={selected}
               onSelect={setSelected}
+              onFill={setFillFrom}
             />
           )}
 
@@ -146,6 +160,7 @@ export default function Budget() {
                 itemCount={itemCount}
                 selected={selected}
                 onSelect={setSelected}
+                onFill={setFillFrom}
               />
               <AddMonthRow months={rows} allocs={allocs} />
             </>
@@ -173,6 +188,97 @@ export default function Budget() {
 }
 
 // ====================================================================
+// „Ciągnij w dół" — przepisanie kwot na kolejne miesiące
+// ====================================================================
+
+function FillDownBar({
+  from,
+  rows,
+  cols,
+  allocMap,
+  onClose,
+}: {
+  from: string
+  rows: BudgetMonth[]
+  cols: BudgetBucket[]
+  allocMap: AllocMap
+  onClose: () => void
+}) {
+  const fill = useFillDownBudget()
+  const toast = useToast()
+  const source = rows.find((m) => m.period === from)
+  const later = rows.filter((m) => m.period > from).map((m) => m.period)
+
+  if (!source) return null
+
+  // wszystkie worki, także zerowe — kopiowanie ma nadpisać, nie dopisać
+  const allocs = cols.map((b) => ({
+    bucket_id: b.id,
+    amount: allocMap.get(allocKey(from, b.id)) ?? 0,
+  }))
+
+  function run(count: number | 'all') {
+    const targets =
+      count === 'all'
+        ? later
+        : Array.from({ length: count }, (_, i) => addPeriods(from, i + 1))
+    if (targets.length === 0) return
+    buzz(BUZZ_DONE)
+    fill.mutate(
+      {
+        targets,
+        income: source!.income,
+        other_override: source!.other_override,
+        allocs,
+      },
+      {
+        onSuccess: () => {
+          toast(`↓ Kwoty z ${shortPeriod(from)} → ${targets.length} msc`)
+          onClose()
+        },
+      }
+    )
+  }
+
+  const options: { key: string; label: string; count: number | 'all'; hint?: string }[] = [
+    { key: 'n1', label: 'następny', count: 1 },
+    { key: 'n3', label: '3 msc', count: 3 },
+    { key: 'n6', label: '6 msc', count: 6 },
+    { key: 'n12', label: '12 msc', count: 12 },
+    { key: 'all', label: `do końca (${later.length})`, count: 'all' },
+  ]
+
+  return (
+    <div className="mb-3 rounded-2xl border border-rating-good/40 bg-surface p-3">
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-sm font-semibold">
+          Kopiuj kwoty z <span className="text-rating-good">{longPeriod(from)}</span> w dół
+        </span>
+        <button onClick={onClose} className="text-xs text-muted hover:text-text">
+          ✕ anuluj
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => (
+          <button
+            key={o.key}
+            disabled={fill.isPending || (o.count === 'all' && later.length === 0)}
+            onClick={() => run(o.count)}
+            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:border-rating-good/60 hover:text-rating-good disabled:opacity-40"
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-muted">
+        Przepisuje pensję i wszystkie worki. Brakujące miesiące dopisze. Statusy opłacenia,
+        „zostało", „cash" i rozpiska celów zostają nietknięte.
+      </p>
+    </div>
+  )
+}
+
+// ====================================================================
 // Skrót — bieżący miesiąc ±2
 // ====================================================================
 
@@ -184,6 +290,7 @@ function ShortView({
   itemCount,
   selected,
   onSelect,
+  onFill,
 }: {
   rows: BudgetMonth[]
   cols: BudgetBucket[]
@@ -192,6 +299,7 @@ function ShortView({
   itemCount: Map<string, number>
   selected: string | null
   onSelect: (p: string | null) => void
+  onFill: (p: string) => void
 }) {
   const add = useAddBudgetMonth()
   const now = currentPeriod()
@@ -227,6 +335,7 @@ function ShortView({
             isNow={period === now}
             isSelected={period === selected}
             onSelect={() => onSelect(period === selected ? null : period)}
+            onFill={() => onFill(period)}
           />
         )
       })}
@@ -243,6 +352,7 @@ function MonthCard({
   isNow,
   isSelected,
   onSelect,
+  onFill,
 }: {
   month: BudgetMonth
   cols: BudgetBucket[]
@@ -252,6 +362,7 @@ function MonthCard({
   isNow: boolean
   isSelected: boolean
   onSelect: () => void
+  onFill: () => void
 }) {
   const saveMonth = useSaveBudgetMonth()
   const setAlloc = useSaveBudgetAlloc()
@@ -415,6 +526,9 @@ function MonthCard({
             ✓ opłać wszystko
           </button>
         )}
+        <button onClick={onFill} className="font-semibold text-muted hover:text-text" title="Przepisz te kwoty na kolejne miesiące">
+          ↓ kopiuj dalej
+        </button>
         <button onClick={onSelect} className="ml-auto font-semibold text-rating-good">
           {isSelected ? 'zwiń' : 'rozpisz →'}
         </button>
@@ -636,6 +750,7 @@ function TableView({
   itemCount,
   selected,
   onSelect,
+  onFill,
 }: {
   rows: BudgetMonth[]
   cols: BudgetBucket[]
@@ -644,6 +759,7 @@ function TableView({
   itemCount: Map<string, number>
   selected: string | null
   onSelect: (p: string | null) => void
+  onFill: (p: string) => void
 }) {
   const saveMonth = useSaveBudgetMonth()
   const setAlloc = useSaveBudgetAlloc()
@@ -722,18 +838,27 @@ function TableView({
                     isSel ? 'bg-[#16202b]' : isNow ? 'bg-[#151d27]' : 'bg-surface'
                   }`}
                 >
-                  <button
-                    onClick={() => {
-                      buzz(BUZZ_TAP)
-                      onSelect(isSel ? null : m.period)
-                    }}
-                    className={`whitespace-nowrap ${
-                      isSel ? 'text-rating-good' : isNow ? 'text-text' : 'text-muted'
-                    }`}
-                  >
-                    {isNow && '▸ '}
-                    {shortPeriod(m.period)}
-                  </button>
+                  <span className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        buzz(BUZZ_TAP)
+                        onSelect(isSel ? null : m.period)
+                      }}
+                      className={`whitespace-nowrap ${
+                        isSel ? 'text-rating-good' : isNow ? 'text-text' : 'text-muted'
+                      }`}
+                    >
+                      {isNow && '▸ '}
+                      {shortPeriod(m.period)}
+                    </button>
+                    <button
+                      onClick={() => onFill(m.period)}
+                      className="px-0.5 text-[10px] text-muted hover:text-rating-good"
+                      title="Kopiuj te kwoty w dół"
+                    >
+                      ↓
+                    </button>
+                  </span>
                 </th>
                 <NumCell
                   value={m.income}

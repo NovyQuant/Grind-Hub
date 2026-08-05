@@ -561,6 +561,50 @@ export function useAddBudgetMonth() {
   })
 }
 
+/**
+ * „Ciągnij w dół" jak w Excelu: przepisz kwoty jednego miesiąca na kolejne.
+ * Kopiuje pensję, worki i ręczne „inne". NIE kopiuje statusów opłacenia
+ * (skopiowany plan startuje jako niezapłacony), zostało/cash ani rozpiski.
+ */
+export function useFillDownBudget() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: {
+      targets: string[]
+      income: number
+      other_override: number | null
+      allocs: { bucket_id: string; amount: number }[]
+    }) => {
+      if (input.targets.length === 0) return
+      const months = input.targets.map((period) => ({
+        period,
+        income: input.income,
+        other_override: input.other_override,
+      }))
+      const { error } = await supabase
+        .from('budget_months')
+        .upsert(months, { onConflict: 'period' })
+      if (error) throw error
+
+      const rows = input.targets.flatMap((period) =>
+        input.allocs.map((a) => ({
+          period,
+          bucket_id: a.bucket_id,
+          amount: a.amount,
+          paid: false,
+        }))
+      )
+      if (rows.length > 0) {
+        const { error: e2 } = await supabase
+          .from('budget_alloc')
+          .upsert(rows, { onConflict: 'period,bucket_id' })
+        if (e2) throw e2
+      }
+    },
+    onSuccess: () => invalidateBudget(qc),
+  })
+}
+
 export function useDeleteBudgetMonth() {
   const qc = useQueryClient()
   return useMutation({
