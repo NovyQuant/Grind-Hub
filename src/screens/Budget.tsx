@@ -38,11 +38,12 @@ import {
 import { buzz, BUZZ_TAP, BUZZ_DONE } from '../lib/haptics'
 import { useToast } from '../components/Toast'
 
-type View = 'skrot' | 'tabela' | 'staty'
+type View = 'skrot' | 'tabela' | 'inne' | 'staty'
 
 const VIEWS: { key: View; label: string }[] = [
   { key: 'skrot', label: '🎯 Skrót' },
   { key: 'tabela', label: '🧮 Tabela' },
+  { key: 'inne', label: '📦 Inne' },
   { key: 'staty', label: '📊 Staty' },
 ]
 
@@ -92,7 +93,6 @@ export default function Budget() {
     return (
       <MonthDetail
         period={period}
-        month={rows.find((m) => m.period === period)}
         buckets={cols}
         allocMap={allocMap}
         paidMap={paidMap}
@@ -118,8 +118,8 @@ export default function Budget() {
         )}
       </div>
       <p className="mb-3 text-sm text-muted">
-        Wypłata rozbita na worki. „Inne" to reszta — rozpisz ją na konkretne cele, a staty pokażą
-        ile średnio na co idzie.
+        Wypłata rozbita na worki. „Inne" to reszta — rozpisujesz ją w zakładce 📦 Inne, miesiąc po
+        miesiącu w przód, a staty pokażą ile średnio na co idzie.
       </p>
 
       <div className="mb-3 flex rounded-xl border border-border bg-surface p-1">
@@ -180,6 +180,16 @@ export default function Budget() {
               />
               <AddMonthRow months={rows} allocs={allocs} />
             </>
+          )}
+
+          {view === 'inne' && (
+            <OtherPlanView
+              rows={rows}
+              cols={cols}
+              allocs={allocs}
+              allocMap={allocMap}
+              items={allItems}
+            />
           )}
 
           {view === 'staty' && (
@@ -1165,88 +1175,150 @@ function ColumnManager({ buckets }: { buckets: BudgetBucket[] }) {
 }
 
 // ====================================================================
-// Rozpiska miesiąca — cele / co kupić
+// Plan Innych — miesiące w przód, rozpiska od razu widoczna
 // ====================================================================
 
-function MonthDetail({
-  period,
-  month,
-  buckets,
+function OtherPlanView({
+  rows,
+  cols,
+  allocs,
   allocMap,
-  paidMap,
   items,
-  onClose,
 }: {
-  period: string
-  month: BudgetMonth | undefined
-  buckets: BudgetBucket[]
+  rows: BudgetMonth[]
+  cols: BudgetBucket[]
+  allocs: BudgetAlloc[]
   allocMap: AllocMap
-  paidMap: PaidMap
-  /** wszystkie pozycje (do podpowiedzi z poprzednich miesięcy) */
   items: BudgetItem[]
-  onClose: () => void
+}) {
+  const add = useAddBudgetMonth()
+  const now = currentPeriod()
+
+  /** tylko pozycje Innych (bucket_id null) */
+  const otherItems = useMemo(() => items.filter((i) => i.bucket_id === null), [items])
+  const byPeriod = useMemo(() => {
+    const m = new Map<string, BudgetItem[]>()
+    for (const i of otherItems) m.set(i.period, [...(m.get(i.period) ?? []), i])
+    return m
+  }, [otherItems])
+
+  /** od bieżącego miesiąca w przód (przeszłość siedzi w Skrócie / Tabeli) */
+  const future = useMemo(() => rows.filter((m) => m.period >= now), [rows, now])
+
+  const last = rows[rows.length - 1]
+  const next = last ? nextPeriod(last.period) : now
+
+  const sums = useMemo(() => {
+    let budget = 0
+    let planned = 0
+    for (const m of future) {
+      budget += rowCalc(m, cols, allocMap).other
+      planned += (byPeriod.get(m.period) ?? []).reduce((s, i) => s + (i.amount ?? 0), 0)
+    }
+    return { budget, planned }
+  }, [future, cols, allocMap, byPeriod])
+
+  function addNext() {
+    buzz(BUZZ_TAP)
+    add.mutate({
+      period: next,
+      income: last?.income ?? 0,
+      copyFrom: last ? allocs.filter((a) => a.period === last.period) : [],
+    })
+  }
+
+  return (
+    <div>
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        <StatTile label={`Inne · ${future.length} msc`} value={fmtShort(sums.budget)} tone="good" />
+        <StatTile label="Rozpisane" value={fmtShort(sums.planned)} />
+        <StatTile
+          label={sums.budget - sums.planned < 0 ? 'Brakuje' : 'Wolne'}
+          value={fmtShort(Math.abs(sums.budget - sums.planned))}
+          tone={sums.budget - sums.planned < 0 ? 'bad' : undefined}
+        />
+      </div>
+
+      {future.length === 0 ? (
+        <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
+          Brak miesięcy od {longPeriod(now)} w przód. Dodaj miesiąc niżej i rozpisuj.
+        </p>
+      ) : (
+        future.map((m) => (
+          <OtherMonthBlock
+            key={m.period}
+            month={m}
+            cols={cols}
+            allocMap={allocMap}
+            mine={byPeriod.get(m.period) ?? []}
+            otherItems={otherItems}
+            isNow={m.period === now}
+          />
+        ))
+      )}
+
+      <button
+        onClick={addNext}
+        className="mt-1 w-full rounded-2xl border border-dashed border-border py-3 text-sm font-semibold text-muted hover:border-rating-good/60 hover:text-rating-good"
+      >
+        + {longPeriod(next)}
+        {last && (
+          <span className="ml-2 text-xs font-normal">(kopiuje kwoty z {shortPeriod(last.period)})</span>
+        )}
+      </button>
+    </div>
+  )
+}
+
+function OtherMonthBlock({
+  month,
+  cols,
+  allocMap,
+  mine,
+  otherItems,
+  isNow,
+}: {
+  month: BudgetMonth
+  cols: BudgetBucket[]
+  allocMap: AllocMap
+  /** pozycje Innych tego miesiąca */
+  mine: BudgetItem[]
+  /** wszystkie pozycje Innych — do podpowiedzi */
+  otherItems: BudgetItem[]
+  isNow: boolean
 }) {
   const addItem = useAddBudgetItem()
   const saveMonth = useSaveBudgetMonth()
-  const setAlloc = useSaveBudgetAlloc()
-  const [active, setActive] = useState<string>(OTHER)
-  const [editBudget, setEditBudget] = useState(false)
   const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
+  const [editBudget, setEditBudget] = useState(false)
+  const [typing, setTyping] = useState(false)
 
-  const monthItems = items.filter((i) => i.period === period)
-  const activeBucket = buckets.find((b) => b.id === active)
-  const activeLabel = activeBucket ? `${activeBucket.icon} ${activeBucket.label}` : '📦 Inne'
-
-  const c = month ? rowCalc(month, buckets, allocMap) : { other: 0, bucketsSum: 0, total: 0 }
-  const budget = activeBucket ? allocMap.get(allocKey(period, activeBucket.id)) ?? 0 : c.other
-  const isPaid = activeBucket
-    ? paidMap.get(allocKey(period, activeBucket.id)) ?? false
-    : month?.other_paid ?? false
-
-  /** Kwota worka: dla Inne to ręczne nadpisanie reszty, dla reszty zwykła alokacja. */
-  function saveBudget(raw: string) {
-    const v = parseNum(raw)
-    if (activeBucket) {
-      if ((v ?? 0) !== budget) setAlloc.mutate({ period, bucket_id: activeBucket.id, amount: v ?? 0 })
-    } else if (v !== month?.other_override) {
-      saveMonth.mutate({ period, other_override: v })
-    }
-    setEditBudget(false)
-  }
-
-  function togglePaid() {
-    buzz(isPaid ? BUZZ_TAP : BUZZ_DONE)
-    if (activeBucket) {
-      setAlloc.mutate({ period, bucket_id: activeBucket.id, paid: !isPaid })
-    } else {
-      saveMonth.mutate({ period, other_paid: !isPaid })
-    }
-  }
-
-  const mine = monthItems.filter((i) => (i.bucket_id ?? OTHER) === active)
+  const budget = rowCalc(month, cols, allocMap).other
   const planned = mine.reduce((s, i) => s + (i.amount ?? 0), 0)
   const rest = budget - planned
+  const isPaid = month.other_paid
 
-  // podpowiedzi: nazwy z poprzednich miesięcy w tym worku, jeszcze nie użyte tutaj
+  // podpowiedzi: nazwy z innych miesięcy, jeszcze nie użyte tutaj
   const suggestions = useMemo(() => {
     const used = new Set(mine.map((i) => i.title.trim().toLowerCase()))
-    return itemStats(items.filter((i) => i.period !== period && (i.bucket_id ?? OTHER) === active))
+    return itemStats(otherItems.filter((i) => i.period !== month.period))
       .filter((s) => !used.has(s.key))
       .slice(0, 6)
-  }, [items, period, active, mine])
+  }, [otherItems, month.period, mine])
+
+  function saveBudget(raw: string) {
+    const v = parseNum(raw)
+    if (v !== month.other_override) saveMonth.mutate({ period: month.period, other_override: v })
+    setEditBudget(false)
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) return
     buzz(BUZZ_TAP)
     addItem.mutate(
-      {
-        period,
-        bucket_id: activeBucket ? activeBucket.id : null,
-        title,
-        amount: parseNum(amount),
-      },
+      { period: month.period, bucket_id: null, title, amount: parseNum(amount) },
       {
         onSuccess: () => {
           setTitle('')
@@ -1257,30 +1329,242 @@ function MonthDetail({
   }
 
   return (
+    <div
+      className={`mb-3 rounded-2xl border bg-surface p-3 ${
+        isNow ? 'border-rating-good/50' : 'border-border'
+      }`}
+    >
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-semibold">
+          {longPeriod(month.period)}
+          {isNow && <span className="ml-1.5 text-[11px] text-rating-good">teraz</span>}
+        </span>
+        <button
+          onClick={() => {
+            buzz(isPaid ? BUZZ_TAP : BUZZ_DONE)
+            saveMonth.mutate({ period: month.period, other_paid: !isPaid })
+          }}
+          className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+            isPaid
+              ? 'border-rating-good/50 bg-rating-good/10 text-rating-good'
+              : 'border-rating-bad/50 bg-rating-bad/10 text-rating-bad'
+          }`}
+        >
+          {isPaid ? '✓ opłacone' : '○ do zapłaty'}
+        </button>
+        <span className="text-xs text-muted">
+          budżet{' '}
+          {editBudget ? (
+            <input
+              autoFocus
+              inputMode="decimal"
+              defaultValue={budget || ''}
+              onFocus={(e) => e.target.select()}
+              onBlur={(e) => saveBudget(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveBudget((e.target as HTMLInputElement).value)
+                if (e.key === 'Escape') setEditBudget(false)
+              }}
+              className="w-20 rounded-md border border-rating-good bg-surface px-1.5 py-0.5 text-right text-xs tabular-nums outline-none"
+            />
+          ) : (
+            <button
+              onClick={() => setEditBudget(true)}
+              className="font-semibold text-text underline decoration-dotted underline-offset-2"
+              title={
+                month.other_override === null
+                  ? 'Reszta pensji po workach — kliknij by wpisać ręcznie'
+                  : 'Kwota wpisana ręcznie'
+              }
+            >
+              {fmtNum(budget)} zł
+            </button>
+          )}
+        </span>
+        <span className="text-xs text-muted">
+          rozpisane <span className="font-semibold text-text">{fmtNum(planned)} zł</span>
+        </span>
+        <span
+          className={`ml-auto text-xs font-semibold ${rest < 0 ? 'text-rating-bad' : 'text-rating-good'}`}
+        >
+          {rest < 0 ? 'brakuje ' : 'wolne '}
+          {fmtNum(Math.abs(rest))} zł
+        </span>
+      </div>
+
+      <div className="mb-2 h-2 overflow-hidden rounded-[3px] bg-surface2">
+        <div
+          className="h-full rounded-[3px]"
+          style={{
+            width: `${budget > 0 ? Math.min(100, (planned / budget) * 100) : planned > 0 ? 100 : 0}%`,
+            background: rest < 0 ? '#e5484d' : OTHER_COLOR,
+          }}
+        />
+      </div>
+
+      {mine.map((i) => (
+        <ItemRow key={i.id} item={i} />
+      ))}
+
+      <form onSubmit={submit} className="mt-1.5 flex gap-2">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onFocus={() => setTyping(true)}
+          placeholder="Na co? (komp, telefon…)"
+          className="min-w-0 flex-1 rounded-xl border border-border bg-surface2 px-3 py-2 text-sm outline-none focus:border-rating-good"
+        />
+        <input
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          onFocus={() => setTyping(true)}
+          inputMode="decimal"
+          placeholder="zł"
+          className="w-16 rounded-xl border border-border bg-surface2 px-2 py-2 text-right text-sm outline-none focus:border-rating-good"
+        />
+        <button
+          type="submit"
+          className="rounded-xl bg-rating-good px-3.5 py-2 text-sm font-semibold text-bg"
+        >
+          +
+        </button>
+      </form>
+
+      {typing && suggestions.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-muted">częste:</span>
+          {suggestions.map((s) => (
+            <button
+              key={s.key}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setTitle(s.label)
+                if (s.avg > 0) setAmount(String(Math.round(s.avg)))
+              }}
+              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted hover:border-rating-good/60 hover:text-rating-good"
+              title={`${s.count}× · średnio ${fmtShort(s.avg)} zł`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {budget === 0 && (
+        <p className="mt-2 rounded-xl border border-border bg-surface2 px-3 py-2 text-[11px] text-muted">
+          Inne wychodzi 0 zł — cała pensja rozdzielona na worki. Kliknij kwotę wyżej i wpisz ile
+          zostawiasz na Inne, albo zmniejsz któryś worek w Tabeli.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ====================================================================
+// Rozpiska miesiąca — cele / co kupić
+// ====================================================================
+
+function MonthDetail({
+  period,
+  buckets,
+  allocMap,
+  paidMap,
+  items,
+  onClose,
+}: {
+  period: string
+  buckets: BudgetBucket[]
+  allocMap: AllocMap
+  paidMap: PaidMap
+  /** wszystkie pozycje (do podpowiedzi z poprzednich miesięcy) */
+  items: BudgetItem[]
+  onClose: () => void
+}) {
+  const addItem = useAddBudgetItem()
+  const setAlloc = useSaveBudgetAlloc()
+  const [active, setActive] = useState<string>(buckets[0]?.id ?? '')
+  const [editBudget, setEditBudget] = useState(false)
+  const [title, setTitle] = useState('')
+  const [amount, setAmount] = useState('')
+
+  const monthItems = items.filter((i) => i.period === period)
+  // worek mógł zniknąć (usunięty w Kolumnach) — wtedy wracamy na pierwszy
+  const activeBucket = buckets.find((b) => b.id === active) ?? buckets[0]
+  const activeId = activeBucket?.id ?? ''
+  const activeLabel = activeBucket ? `${activeBucket.icon} ${activeBucket.label}` : ''
+
+  const budget = activeBucket ? allocMap.get(allocKey(period, activeId)) ?? 0 : 0
+  const isPaid = activeBucket ? paidMap.get(allocKey(period, activeId)) ?? false : false
+
+  function saveBudget(raw: string) {
+    const v = parseNum(raw)
+    if (activeBucket && (v ?? 0) !== budget) {
+      setAlloc.mutate({ period, bucket_id: activeId, amount: v ?? 0 })
+    }
+    setEditBudget(false)
+  }
+
+  function togglePaid() {
+    if (!activeBucket) return
+    buzz(isPaid ? BUZZ_TAP : BUZZ_DONE)
+    setAlloc.mutate({ period, bucket_id: activeId, paid: !isPaid })
+  }
+
+  const mine = monthItems.filter((i) => i.bucket_id === activeId)
+  const planned = mine.reduce((s, i) => s + (i.amount ?? 0), 0)
+  const rest = budget - planned
+
+  // podpowiedzi: nazwy z poprzednich miesięcy w tym worku, jeszcze nie użyte tutaj
+  const suggestions = useMemo(() => {
+    const used = new Set(mine.map((i) => i.title.trim().toLowerCase()))
+    return itemStats(items.filter((i) => i.period !== period && i.bucket_id === activeId))
+      .filter((s) => !used.has(s.key))
+      .slice(0, 6)
+  }, [items, period, activeId, mine])
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!title.trim() || !activeBucket) return
+    buzz(BUZZ_TAP)
+    addItem.mutate(
+      { period, bucket_id: activeId, title, amount: parseNum(amount) },
+      {
+        onSuccess: () => {
+          setTitle('')
+          setAmount('')
+        },
+      }
+    )
+  }
+
+  if (!activeBucket) {
+    return (
+      <div className="mt-4 rounded-2xl border border-border bg-surface p-4 text-center text-sm text-muted">
+        Brak worków — dodaj je w ⚙️ Kolumny (Tabela).
+      </div>
+    )
+  }
+
+  return (
     <div className="mt-4 rounded-2xl border border-rating-good/40 bg-surface p-3">
       <div className="mb-2 flex items-baseline justify-between">
-        <span className="font-semibold">{longPeriod(period)} — rozpiska</span>
+        <span className="font-semibold">{longPeriod(period)} — rozpiska worków</span>
         <button onClick={onClose} className="text-xs text-muted hover:text-text">
           ✕ zamknij
         </button>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1.5">
-        {[
-          { key: OTHER, label: '📦 Inne', color: OTHER_COLOR },
-          ...buckets.map((b, i) => ({
-            key: b.id,
-            label: `${b.icon} ${b.label}`,
-            color: bucketColor(i),
-          })),
-        ].map((c2) => {
-          const n = monthItems.filter((i) => (i.bucket_id ?? OTHER) === c2.key).length
+        {buckets
+          .map((b, i) => ({ key: b.id, label: `${b.icon} ${b.label}`, color: bucketColor(i) }))
+          .map((c2) => {
+          const n = monthItems.filter((i) => i.bucket_id === c2.key).length
           return (
             <button
               key={c2.key}
               onClick={() => setActive(c2.key)}
               className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
-                active === c2.key
+                activeId === c2.key
                   ? 'border-rating-good/60 bg-rating-good/10 text-text'
                   : 'border-border text-muted'
               }`}
@@ -1377,13 +1661,9 @@ function MonthDetail({
         </div>
       )}
 
-      {budget === 0 && !activeBucket && (
-        <p className="mb-2 rounded-xl border border-border bg-surface2 px-3 py-2 text-[11px] text-muted">
-          Inne wychodzi 0 zł — cała pensja jest już rozdzielona na worki. Kliknij kwotę wyżej i
-          wpisz ile zostawiasz na Inne (suma przekroczy wtedy pensję), albo zmniejsz któryś worek
-          w tabeli.
-        </p>
-      )}
+      <p className="mb-2 text-[11px] text-muted">
+        Inne rozpisujesz w zakładce 📦 Inne — tam widać wszystkie miesiące w przód naraz.
+      </p>
 
       {mine.length === 0 ? (
         <p className="py-3 text-center text-sm text-muted">
