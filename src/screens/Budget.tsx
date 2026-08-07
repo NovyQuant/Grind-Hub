@@ -15,8 +15,21 @@ import {
   useAddBudgetItem,
   useUpdateBudgetItem,
   useDeleteBudgetItem,
+  useBudgetGoals,
+  useBudgetGoalAlloc,
+  useAddBudgetGoal,
+  useUpdateBudgetGoal,
+  useDeleteBudgetGoal,
+  useSaveBudgetGoalAlloc,
 } from '../lib/queries'
-import { BudgetAlloc, BudgetBucket, BudgetItem, BudgetMonth } from '../lib/types'
+import {
+  BudgetAlloc,
+  BudgetBucket,
+  BudgetGoal,
+  BudgetGoalAlloc,
+  BudgetItem,
+  BudgetMonth,
+} from '../lib/types'
 import {
   AllocMap,
   OTHER_COLOR,
@@ -28,6 +41,7 @@ import {
   currentPeriod,
   fmtNum,
   fmtShort,
+  goalStats,
   itemStats,
   longPeriod,
   nextPeriod,
@@ -55,6 +69,8 @@ export default function Budget() {
   const months = useBudgetMonths()
   const alloc = useBudgetAlloc()
   const items = useBudgetItems()
+  const goals = useBudgetGoals()
+  const goalAlloc = useBudgetGoalAlloc()
 
   const [view, setView] = useState<View>('skrot')
   const [selected, setSelected] = useState<string | null>(null)
@@ -66,6 +82,8 @@ export default function Budget() {
   const rows = months.data ?? []
   const allocs = alloc.data ?? []
   const allItems = items.data ?? []
+  const allGoals = goals.data ?? []
+  const goalAllocs = goalAlloc.data ?? []
 
   const allocMap: AllocMap = useMemo(() => {
     const m = new Map<string, number>()
@@ -79,15 +97,21 @@ export default function Budget() {
     return m
   }, [allocs])
 
-  /** period|bucket ('inne' dla worka Inne) → liczba pozycji rozpiski */
+  /** period|bucket ('inne' = cele zakupowe) → liczba pozycji rozpiski */
   const itemCount = useMemo(() => {
     const m = new Map<string, number>()
     for (const i of allItems) {
-      const k = allocKey(i.period, i.bucket_id ?? OTHER)
+      if (!i.bucket_id) continue
+      const k = allocKey(i.period, i.bucket_id)
+      m.set(k, (m.get(k) ?? 0) + 1)
+    }
+    for (const a of goalAllocs) {
+      if (a.amount <= 0) continue
+      const k = allocKey(a.period, OTHER)
       m.set(k, (m.get(k) ?? 0) + 1)
     }
     return m
-  }, [allItems])
+  }, [allItems, goalAllocs])
 
   function renderDetail(period: string) {
     return (
@@ -188,12 +212,20 @@ export default function Budget() {
               cols={cols}
               allocs={allocs}
               allocMap={allocMap}
-              items={allItems}
+              goals={allGoals}
+              goalAllocs={goalAllocs}
             />
           )}
 
           {view === 'staty' && (
-            <StatsView rows={rows} cols={cols} allocMap={allocMap} items={allItems} />
+            <StatsView
+              rows={rows}
+              cols={cols}
+              allocMap={allocMap}
+              items={allItems}
+              goals={allGoals}
+              goalAllocs={goalAllocs}
+            />
           )}
 
           {selected && view === 'tabela' && renderDetail(selected)}
@@ -575,11 +607,15 @@ function StatsView({
   cols,
   allocMap,
   items,
+  goals,
+  goalAllocs,
 }: {
   rows: BudgetMonth[]
   cols: BudgetBucket[]
   allocMap: AllocMap
   items: BudgetItem[]
+  goals: BudgetGoal[]
+  goalAllocs: BudgetGoalAlloc[]
 }) {
   const [range, setRange] = useState<Range>('do_teraz')
   const [bucket, setBucket] = useState<string>(OTHER)
@@ -591,13 +627,21 @@ function StatsView({
   )
   const stats = useMemo(() => budgetStats(scoped, cols, allocMap), [scoped, cols, allocMap])
 
-  const scopedItems = useMemo(() => {
+  // rozpiska worków siedzi w items, „Inne" w celach zakupowych
+  const byName = useMemo(() => {
     const inRange = new Set(scoped.map((m) => m.period))
-    return items.filter(
-      (i) => inRange.has(i.period) && (bucket === 'all' || (i.bucket_id ?? OTHER) === bucket)
-    )
-  }, [items, scoped, bucket])
-  const byName = useMemo(() => itemStats(scopedItems), [scopedItems])
+    const fromItems =
+      bucket === OTHER
+        ? []
+        : itemStats(
+            items.filter(
+              (i) => i.bucket_id && inRange.has(i.period) && (bucket === 'all' || i.bucket_id === bucket)
+            )
+          )
+    const fromGoals =
+      bucket === OTHER || bucket === 'all' ? goalStats(goals, goalAllocs, inRange) : []
+    return [...fromItems, ...fromGoals].sort((a, b) => b.total - a.total || b.count - a.count)
+  }, [items, goals, goalAllocs, scoped, bucket])
   const namedTotal = byName.reduce((s, i) => s + i.total, 0)
 
   const series = stats.series.filter((s) => s.total > 0).sort((a, b) => b.total - a.total)
@@ -703,7 +747,7 @@ function StatsView({
 
         {byName.length === 0 ? (
           <p className="py-3 text-center text-sm text-muted">
-            Nic tu nie rozpisane. Wejdź w miesiąc i wpisz na co poszło.
+            Nic tu nie rozpisane. Cele Innych wpisujesz w zakładce 📦 Inne.
           </p>
         ) : (
           <table className="w-full text-xs tabular-nums">
@@ -1175,7 +1219,7 @@ function ColumnManager({ buckets }: { buckets: BudgetBucket[] }) {
 }
 
 // ====================================================================
-// Plan Innych — miesiące w przód, rozpiska od razu widoczna
+// Plan Innych — cele zakupowe × miesiące
 // ====================================================================
 
 function OtherPlanView({
@@ -1183,44 +1227,76 @@ function OtherPlanView({
   cols,
   allocs,
   allocMap,
-  items,
+  goals,
+  goalAllocs,
 }: {
   rows: BudgetMonth[]
   cols: BudgetBucket[]
   allocs: BudgetAlloc[]
   allocMap: AllocMap
-  items: BudgetItem[]
+  goals: BudgetGoal[]
+  goalAllocs: BudgetGoalAlloc[]
 }) {
-  const add = useAddBudgetMonth()
+  const addMonth = useAddBudgetMonth()
+  const addGoal = useAddBudgetGoal()
+  const saveMonth = useSaveBudgetMonth()
+  const setGoalAlloc = useSaveBudgetGoalAlloc()
   const now = currentPeriod()
 
-  /** tylko pozycje Innych (bucket_id null) */
-  const otherItems = useMemo(() => items.filter((i) => i.bucket_id === null), [items])
-  const byPeriod = useMemo(() => {
-    const m = new Map<string, BudgetItem[]>()
-    for (const i of otherItems) m.set(i.period, [...(m.get(i.period) ?? []), i])
+  const [title, setTitle] = useState('')
+  const [target, setTarget] = useState('')
+  const [showDone, setShowDone] = useState(false)
+
+  /** goal|period → kwota */
+  const cell = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const a of goalAllocs) m.set(allocKey(a.period, a.goal_id), a.amount)
     return m
-  }, [otherItems])
+  }, [goalAllocs])
 
-  /** od bieżącego miesiąca w przód (przeszłość siedzi w Skrócie / Tabeli) */
+  /** goal → zebrane łącznie (ze wszystkich miesięcy, też tych minionych) */
+  const saved = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const a of goalAllocs) m.set(a.goal_id, (m.get(a.goal_id) ?? 0) + a.amount)
+    return m
+  }, [goalAllocs])
+
+  /** kolumny: bieżący miesiąc w przód */
   const future = useMemo(() => rows.filter((m) => m.period >= now), [rows, now])
-
   const last = rows[rows.length - 1]
   const next = last ? nextPeriod(last.period) : now
 
-  const sums = useMemo(() => {
-    let budget = 0
-    let planned = 0
-    for (const m of future) {
-      budget += rowCalc(m, cols, allocMap).other
-      planned += (byPeriod.get(m.period) ?? []).reduce((s, i) => s + (i.amount ?? 0), 0)
-    }
-    return { budget, planned }
-  }, [future, cols, allocMap, byPeriod])
+  const open = goals.filter((g) => !g.done)
+  const bought = goals.filter((g) => g.done)
+  const shown = showDone ? [...open, ...bought] : open
 
-  function addNext() {
+  /** period → ile rozdzielone na cele */
+  const spread = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const a of goalAllocs) m.set(a.period, (m.get(a.period) ?? 0) + a.amount)
+    return m
+  }, [goalAllocs])
+
+  const budgetOf = (m: BudgetMonth) => rowCalc(m, cols, allocMap).other
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!title.trim()) return
     buzz(BUZZ_TAP)
-    add.mutate({
+    addGoal.mutate(
+      { title, target: parseNum(target) },
+      {
+        onSuccess: () => {
+          setTitle('')
+          setTarget('')
+        },
+      }
+    )
+  }
+
+  function addNextMonth() {
+    buzz(BUZZ_TAP)
+    addMonth.mutate({
       period: next,
       income: last?.income ?? 0,
       copyFrom: last ? allocs.filter((a) => a.period === last.period) : [],
@@ -1229,198 +1305,19 @@ function OtherPlanView({
 
   return (
     <div>
-      <div className="mb-3 grid grid-cols-3 gap-2">
-        <StatTile label={`Inne · ${future.length} msc`} value={fmtShort(sums.budget)} tone="good" />
-        <StatTile label="Rozpisane" value={fmtShort(sums.planned)} />
-        <StatTile
-          label={sums.budget - sums.planned < 0 ? 'Brakuje' : 'Wolne'}
-          value={fmtShort(Math.abs(sums.budget - sums.planned))}
-          tone={sums.budget - sums.planned < 0 ? 'bad' : undefined}
-        />
-      </div>
-
-      {future.length === 0 ? (
-        <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
-          Brak miesięcy od {longPeriod(now)} w przód. Dodaj miesiąc niżej i rozpisuj.
-        </p>
-      ) : (
-        future.map((m) => (
-          <OtherMonthBlock
-            key={m.period}
-            month={m}
-            cols={cols}
-            allocMap={allocMap}
-            mine={byPeriod.get(m.period) ?? []}
-            otherItems={otherItems}
-            isNow={m.period === now}
-          />
-        ))
-      )}
-
-      <button
-        onClick={addNext}
-        className="mt-1 w-full rounded-2xl border border-dashed border-border py-3 text-sm font-semibold text-muted hover:border-rating-good/60 hover:text-rating-good"
-      >
-        + {longPeriod(next)}
-        {last && (
-          <span className="ml-2 text-xs font-normal">(kopiuje kwoty z {shortPeriod(last.period)})</span>
-        )}
-      </button>
-    </div>
-  )
-}
-
-function OtherMonthBlock({
-  month,
-  cols,
-  allocMap,
-  mine,
-  otherItems,
-  isNow,
-}: {
-  month: BudgetMonth
-  cols: BudgetBucket[]
-  allocMap: AllocMap
-  /** pozycje Innych tego miesiąca */
-  mine: BudgetItem[]
-  /** wszystkie pozycje Innych — do podpowiedzi */
-  otherItems: BudgetItem[]
-  isNow: boolean
-}) {
-  const addItem = useAddBudgetItem()
-  const saveMonth = useSaveBudgetMonth()
-  const [title, setTitle] = useState('')
-  const [amount, setAmount] = useState('')
-  const [editBudget, setEditBudget] = useState(false)
-  const [typing, setTyping] = useState(false)
-
-  const budget = rowCalc(month, cols, allocMap).other
-  const planned = mine.reduce((s, i) => s + (i.amount ?? 0), 0)
-  const rest = budget - planned
-  const isPaid = month.other_paid
-
-  // podpowiedzi: nazwy z innych miesięcy, jeszcze nie użyte tutaj
-  const suggestions = useMemo(() => {
-    const used = new Set(mine.map((i) => i.title.trim().toLowerCase()))
-    return itemStats(otherItems.filter((i) => i.period !== month.period))
-      .filter((s) => !used.has(s.key))
-      .slice(0, 6)
-  }, [otherItems, month.period, mine])
-
-  function saveBudget(raw: string) {
-    const v = parseNum(raw)
-    if (v !== month.other_override) saveMonth.mutate({ period: month.period, other_override: v })
-    setEditBudget(false)
-  }
-
-  function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!title.trim()) return
-    buzz(BUZZ_TAP)
-    addItem.mutate(
-      { period: month.period, bucket_id: null, title, amount: parseNum(amount) },
-      {
-        onSuccess: () => {
-          setTitle('')
-          setAmount('')
-        },
-      }
-    )
-  }
-
-  return (
-    <div
-      className={`mb-3 rounded-2xl border bg-surface p-3 ${
-        isNow ? 'border-rating-good/50' : 'border-border'
-      }`}
-    >
-      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-semibold">
-          {longPeriod(month.period)}
-          {isNow && <span className="ml-1.5 text-[11px] text-rating-good">teraz</span>}
-        </span>
-        <button
-          onClick={() => {
-            buzz(isPaid ? BUZZ_TAP : BUZZ_DONE)
-            saveMonth.mutate({ period: month.period, other_paid: !isPaid })
-          }}
-          className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
-            isPaid
-              ? 'border-rating-good/50 bg-rating-good/10 text-rating-good'
-              : 'border-rating-bad/50 bg-rating-bad/10 text-rating-bad'
-          }`}
-        >
-          {isPaid ? '✓ opłacone' : '○ do zapłaty'}
-        </button>
-        <span className="text-xs text-muted">
-          budżet{' '}
-          {editBudget ? (
-            <input
-              autoFocus
-              inputMode="decimal"
-              defaultValue={budget || ''}
-              onFocus={(e) => e.target.select()}
-              onBlur={(e) => saveBudget(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') saveBudget((e.target as HTMLInputElement).value)
-                if (e.key === 'Escape') setEditBudget(false)
-              }}
-              className="w-20 rounded-md border border-rating-good bg-surface px-1.5 py-0.5 text-right text-xs tabular-nums outline-none"
-            />
-          ) : (
-            <button
-              onClick={() => setEditBudget(true)}
-              className="font-semibold text-text underline decoration-dotted underline-offset-2"
-              title={
-                month.other_override === null
-                  ? 'Reszta pensji po workach — kliknij by wpisać ręcznie'
-                  : 'Kwota wpisana ręcznie'
-              }
-            >
-              {fmtNum(budget)} zł
-            </button>
-          )}
-        </span>
-        <span className="text-xs text-muted">
-          rozpisane <span className="font-semibold text-text">{fmtNum(planned)} zł</span>
-        </span>
-        <span
-          className={`ml-auto text-xs font-semibold ${rest < 0 ? 'text-rating-bad' : 'text-rating-good'}`}
-        >
-          {rest < 0 ? 'brakuje ' : 'wolne '}
-          {fmtNum(Math.abs(rest))} zł
-        </span>
-      </div>
-
-      <div className="mb-2 h-2 overflow-hidden rounded-[3px] bg-surface2">
-        <div
-          className="h-full rounded-[3px]"
-          style={{
-            width: `${budget > 0 ? Math.min(100, (planned / budget) * 100) : planned > 0 ? 100 : 0}%`,
-            background: rest < 0 ? '#e5484d' : OTHER_COLOR,
-          }}
-        />
-      </div>
-
-      {mine.map((i) => (
-        <ItemRow key={i.id} item={i} />
-      ))}
-
-      <form onSubmit={submit} className="mt-1.5 flex gap-2">
+      <form onSubmit={submit} className="mb-3 flex gap-2">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          onFocus={() => setTyping(true)}
-          placeholder="Na co? (komp, telefon…)"
+          placeholder="Co chcę kupić? (komputer, telefon…)"
           className="min-w-0 flex-1 rounded-xl border border-border bg-surface2 px-3 py-2 text-sm outline-none focus:border-rating-good"
         />
         <input
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          onFocus={() => setTyping(true)}
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
           inputMode="decimal"
-          placeholder="zł"
-          className="w-16 rounded-xl border border-border bg-surface2 px-2 py-2 text-right text-sm outline-none focus:border-rating-good"
+          placeholder="cena"
+          className="w-20 rounded-xl border border-border bg-surface2 px-2 py-2 text-right text-sm outline-none focus:border-rating-good"
         />
         <button
           type="submit"
@@ -1430,33 +1327,236 @@ function OtherMonthBlock({
         </button>
       </form>
 
-      {typing && suggestions.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-muted">częste:</span>
-          {suggestions.map((s) => (
-            <button
-              key={s.key}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setTitle(s.label)
-                if (s.avg > 0) setAmount(String(Math.round(s.avg)))
-              }}
-              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted hover:border-rating-good/60 hover:text-rating-good"
-              title={`${s.count}× · średnio ${fmtShort(s.avg)} zł`}
-            >
-              {s.label}
-            </button>
-          ))}
+      {goals.length === 0 ? (
+        <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
+          Wypisz rzeczy, na które zbierasz. Potem w każdym miesiącu wpiszesz ile na nie idzie z
+          budżetu Innych.
+        </p>
+      ) : future.length === 0 ? (
+        <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
+          Brak miesięcy od {longPeriod(now)} w przód — dodaj miesiąc niżej, żeby rozpisywać.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-border bg-surface">
+          <table className="w-full border-collapse text-xs tabular-nums">
+            <thead>
+              <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted">
+                <th className="sticky left-0 z-10 bg-surface px-2 py-2 text-left font-semibold">
+                  Cel
+                </th>
+                <th className="px-2 py-2 text-right font-semibold">Zebrane</th>
+                {future.map((m) => (
+                  <th
+                    key={m.period}
+                    className={`whitespace-nowrap px-2 py-2 text-right font-semibold ${
+                      m.period === now ? 'text-text' : ''
+                    }`}
+                  >
+                    {shortPeriod(m.period)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((g) => (
+                <GoalRow
+                  key={g.id}
+                  goal={g}
+                  periods={future.map((m) => m.period)}
+                  saved={saved.get(g.id) ?? 0}
+                  cell={cell}
+                  onCell={(period, amount) =>
+                    setGoalAlloc.mutate({ goal_id: g.id, period, amount })
+                  }
+                />
+              ))}
+
+              <tr className="border-t border-border text-[11px]">
+                <th className="sticky left-0 z-10 bg-surface px-2 py-2 text-left font-semibold uppercase tracking-wider text-muted">
+                  📦 Budżet Innych
+                </th>
+                <td />
+                {future.map((m) => (
+                  <NumCell
+                    key={m.period}
+                    value={budgetOf(m)}
+                    auto={m.other_override === null}
+                    onSave={(v) => saveMonth.mutate({ period: m.period, other_override: v })}
+                  />
+                ))}
+              </tr>
+              <tr className="text-[11px]">
+                <th className="sticky left-0 z-10 bg-surface px-2 py-1 text-left font-semibold uppercase tracking-wider text-muted">
+                  Rozdzielone
+                </th>
+                <td />
+                {future.map((m) => (
+                  <td key={m.period} className="px-2 py-1 text-right text-muted">
+                    {fmtNum(spread.get(m.period) ?? 0)}
+                  </td>
+                ))}
+              </tr>
+              <tr className="text-[11px] font-bold">
+                <th className="sticky left-0 z-10 bg-surface px-2 py-1 text-left uppercase tracking-wider text-muted">
+                  Wolne
+                </th>
+                <td />
+                {future.map((m) => {
+                  const free = budgetOf(m) - (spread.get(m.period) ?? 0)
+                  return (
+                    <td
+                      key={m.period}
+                      className={`px-2 py-1 text-right ${
+                        free < 0 ? 'text-rating-bad' : free === 0 ? 'text-muted' : 'text-rating-good'
+                      }`}
+                    >
+                      {fmtNum(free)}
+                    </td>
+                  )
+                })}
+              </tr>
+            </tbody>
+          </table>
         </div>
       )}
 
-      {budget === 0 && (
-        <p className="mt-2 rounded-xl border border-border bg-surface2 px-3 py-2 text-[11px] text-muted">
-          Inne wychodzi 0 zł — cała pensja rozdzielona na worki. Kliknij kwotę wyżej i wpisz ile
-          zostawiasz na Inne, albo zmniejsz któryś worek w Tabeli.
-        </p>
-      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          onClick={addNextMonth}
+          className="rounded-xl border border-dashed border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-rating-good/60 hover:text-rating-good"
+        >
+          + {longPeriod(next)}
+        </button>
+        {bought.length > 0 && (
+          <button
+            onClick={() => setShowDone((s) => !s)}
+            className="rounded-xl border border-border px-3 py-1.5 text-xs text-muted hover:text-text"
+          >
+            {showDone ? 'Ukryj kupione' : `Pokaż kupione (${bought.length})`}
+          </button>
+        )}
+      </div>
     </div>
+  )
+}
+
+function GoalRow({
+  goal,
+  periods,
+  saved,
+  cell,
+  onCell,
+}: {
+  goal: BudgetGoal
+  periods: string[]
+  /** ile już odłożone łącznie */
+  saved: number
+  cell: Map<string, number>
+  onCell: (period: string, amount: number | null) => void
+}) {
+  const update = useUpdateBudgetGoal()
+  const del = useDeleteBudgetGoal()
+  const [editTitle, setEditTitle] = useState(false)
+  const [editTarget, setEditTarget] = useState(false)
+
+  const missing = goal.target != null ? goal.target - saved : null
+  const pct = goal.target ? Math.min(100, (saved / goal.target) * 100) : 0
+
+  return (
+    <tr className={`border-b border-border/60 ${goal.done ? 'opacity-50' : ''}`}>
+      <th scope="row" className="sticky left-0 z-10 bg-surface px-2 py-1.5 text-left font-normal">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              buzz(goal.done ? BUZZ_TAP : BUZZ_DONE)
+              update.mutate({ id: goal.id, done: !goal.done })
+            }}
+            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] ${
+              goal.done ? 'border-rating-good bg-rating-good text-bg' : 'border-border'
+            }`}
+            title={goal.done ? 'Kupione — kliknij, by cofnąć' : 'Odhacz gdy kupione'}
+          >
+            {goal.done && '✓'}
+          </button>
+          {editTitle ? (
+            <input
+              autoFocus
+              defaultValue={goal.title}
+              onBlur={(e) => {
+                const v = e.target.value.trim()
+                if (v && v !== goal.title) update.mutate({ id: goal.id, title: v })
+                setEditTitle(false)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setEditTitle(false)
+              }}
+              className="w-28 rounded-md border border-rating-good bg-surface2 px-1 py-0.5 text-xs outline-none"
+            />
+          ) : (
+            <button
+              onClick={() => setEditTitle(true)}
+              className={`max-w-[7.5rem] truncate text-left text-xs font-semibold ${
+                goal.done ? 'line-through' : ''
+              }`}
+            >
+              {goal.title}
+            </button>
+          )}
+          <button
+            onClick={() => {
+              if (confirm(`Usunąć „${goal.title}" razem z odłożonymi kwotami?`)) del.mutate(goal.id)
+            }}
+            className="shrink-0 text-[10px] text-muted hover:text-rating-bad"
+            title="Usuń cel"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5 pl-[22px] text-[10px] text-muted">
+          {editTarget ? (
+            <input
+              autoFocus
+              inputMode="decimal"
+              defaultValue={goal.target ?? ''}
+              onFocus={(e) => e.target.select()}
+              onBlur={(e) => {
+                const v = parseNum(e.target.value)
+                if (v !== goal.target) update.mutate({ id: goal.id, target: v })
+                setEditTarget(false)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setEditTarget(false)
+              }}
+              className="w-16 rounded-md border border-rating-good bg-surface2 px-1 py-0.5 text-right text-[10px] tabular-nums outline-none"
+            />
+          ) : (
+            <button onClick={() => setEditTarget(true)} className="underline decoration-dotted">
+              {goal.target != null ? `cena ${fmtShort(goal.target)}` : '+ cena'}
+            </button>
+          )}
+          {missing != null && missing > 0 && <span>brakuje {fmtShort(missing)}</span>}
+          {missing != null && missing <= 0 && <span className="text-rating-good">uzbierane</span>}
+        </div>
+        {goal.target != null && goal.target > 0 && (
+          <div className="mt-1 h-1 w-full overflow-hidden rounded-[2px] bg-surface2">
+            <div
+              className="h-full rounded-[2px]"
+              style={{ width: `${pct}%`, background: pct >= 100 ? '#30c85e' : OTHER_COLOR }}
+            />
+          </div>
+        )}
+      </th>
+      <td className="px-2 py-1 text-right font-semibold">{fmtNum(saved)}</td>
+      {periods.map((p) => (
+        <NumCell
+          key={p}
+          value={cell.get(allocKey(p, goal.id)) ?? null}
+          onSave={(v) => onCell(p, v)}
+        />
+      ))}
+    </tr>
   )
 }
 

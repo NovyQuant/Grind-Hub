@@ -126,7 +126,7 @@ create table if not exists budget_alloc (
   unique (period, bucket_id)
 );
 
--- Rozpiska celów („co kupić"); bucket_id null = worek „Inne"
+-- Rozpiska worków („co kupić" w ramach worka); Inne siedzi w budget_goals
 create table if not exists budget_items (
   id uuid primary key default gen_random_uuid(),
   period text not null,
@@ -138,12 +138,33 @@ create table if not exists budget_items (
   created_at timestamptz default now()
 );
 
+-- Cele zakupowe z worka „Inne" (komputer, telefon, ciuchy…)
+create table if not exists budget_goals (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  icon text not null default '🎯',
+  target numeric,                       -- cena docelowa (null = bez ceny)
+  done boolean not null default false,  -- kupione
+  sort_order int not null default 0,
+  created_at timestamptz default now()
+);
+
+-- Ile w danym miesiącu odkładam na dany cel
+create table if not exists budget_goal_alloc (
+  id uuid primary key default gen_random_uuid(),
+  goal_id uuid not null references budget_goals (id) on delete cascade,
+  period text not null,
+  amount numeric not null default 0,
+  unique (goal_id, period)
+);
+
 create index if not exists logs_date_idx on logs (log_date);
 create index if not exists snapshots_area_idx on attribute_snapshots (area, snap_date);
 create index if not exists tasks_due_idx on tasks (due_date);
 create index if not exists events_date_idx on events (event_date);
 create index if not exists budget_alloc_period_idx on budget_alloc (period);
 create index if not exists budget_items_period_idx on budget_items (period);
+create index if not exists budget_goal_alloc_period_idx on budget_goal_alloc (period);
 
 -- ---------- Row Level Security ---------------------------------------
 alter table habits enable row level security;
@@ -158,6 +179,8 @@ alter table budget_buckets enable row level security;
 alter table budget_months enable row level security;
 alter table budget_alloc enable row level security;
 alter table budget_items enable row level security;
+alter table budget_goals enable row level security;
+alter table budget_goal_alloc enable row level security;
 
 create policy "auth full habits" on habits for all to authenticated using (true) with check (true);
 create policy "auth full logs" on logs for all to authenticated using (true) with check (true);
@@ -171,6 +194,8 @@ create policy "auth full budget_buckets" on budget_buckets for all to authentica
 create policy "auth full budget_months" on budget_months for all to authenticated using (true) with check (true);
 create policy "auth full budget_alloc" on budget_alloc for all to authenticated using (true) with check (true);
 create policy "auth full budget_items" on budget_items for all to authenticated using (true) with check (true);
+create policy "auth full budget_goals" on budget_goals for all to authenticated using (true) with check (true);
+create policy "auth full budget_goal_alloc" on budget_goal_alloc for all to authenticated using (true) with check (true);
 
 -- ---------- Seed nawyków ---------------------------------------------
 insert into habits

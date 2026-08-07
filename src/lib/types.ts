@@ -124,6 +124,24 @@ export interface BudgetAlloc {
   paid: boolean // czerwony/zielony — czy ta kwota już wyszła
 }
 
+/** Cel zakupowy z worka „Inne" — żyje ponad miesiącami (komputer, telefon…). */
+export interface BudgetGoal {
+  id: string
+  title: string
+  icon: string
+  target: number | null // cena docelowa (null = bez ceny)
+  done: boolean // kupione
+  sort_order: number
+}
+
+/** Ile w danym miesiącu odkładam na dany cel. */
+export interface BudgetGoalAlloc {
+  id: string
+  goal_id: string
+  period: string
+  amount: number
+}
+
 /** Rozpiska celów: co kupić / na co idzie worek (bucket_id null = „Inne"). */
 export interface BudgetItem {
   id: string

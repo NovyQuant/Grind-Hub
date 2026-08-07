@@ -1,6 +1,6 @@
 // Budżet — wyliczenia i formatowanie wspólne dla wszystkich widoków.
 
-import { BudgetBucket, BudgetItem, BudgetMonth } from './types'
+import { BudgetBucket, BudgetGoal, BudgetGoalAlloc, BudgetItem, BudgetMonth } from './types'
 import { todayISO } from './date'
 
 export const MONTHS_SHORT = [
@@ -190,6 +190,39 @@ export interface ItemStat {
   avg: number
   /** ile już odhaczone */
   done: number
+}
+
+/**
+ * To samo dla celów zakupowych: ile łącznie odłożone na cel w danym zakresie
+ * miesięcy i ile średnio wychodzi na miesiąc odkładania.
+ */
+export function goalStats(
+  goals: BudgetGoal[],
+  allocs: BudgetGoalAlloc[],
+  periods: Set<string>
+): ItemStat[] {
+  const byGoal = new Map<string, { total: number; count: number }>()
+  for (const a of allocs) {
+    if (!periods.has(a.period) || a.amount === 0) continue
+    const g = byGoal.get(a.goal_id) ?? { total: 0, count: 0 }
+    g.total += a.amount
+    g.count += 1
+    byGoal.set(a.goal_id, g)
+  }
+  return goals
+    .filter((g) => byGoal.has(g.id))
+    .map((g) => {
+      const s = byGoal.get(g.id)!
+      return {
+        key: g.id,
+        label: g.title,
+        total: s.total,
+        count: s.count,
+        avg: s.total / s.count,
+        done: g.done ? s.count : 0,
+      }
+    })
+    .sort((a, b) => b.total - a.total)
 }
 
 /** Grupuje pozycje rozpiski po nazwie — „ile średnio idzie na buty". */

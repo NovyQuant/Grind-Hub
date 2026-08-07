@@ -4,6 +4,8 @@ import {
   Abstinence,
   BudgetAlloc,
   BudgetBucket,
+  BudgetGoal,
+  BudgetGoalAlloc,
   BudgetItem,
   BudgetMonth,
   CalendarEvent,
@@ -379,7 +381,14 @@ export function useDeleteEvent() {
 
 // ---------- Budżet: tabela miesięczna ----------------------------------
 
-const BUDGET_KEYS = [['budget_buckets'], ['budget_months'], ['budget_alloc'], ['budget_items']]
+const BUDGET_KEYS = [
+  ['budget_buckets'],
+  ['budget_months'],
+  ['budget_alloc'],
+  ['budget_items'],
+  ['budget_goals'],
+  ['budget_goal_alloc'],
+]
 
 function invalidateBudget(qc: ReturnType<typeof useQueryClient>) {
   for (const key of BUDGET_KEYS) qc.invalidateQueries({ queryKey: key })
@@ -611,6 +620,7 @@ export function useDeleteBudgetMonth() {
     mutationFn: async (period: string) => {
       await supabase.from('budget_alloc').delete().eq('period', period)
       await supabase.from('budget_items').delete().eq('period', period)
+      await supabase.from('budget_goal_alloc').delete().eq('period', period)
       const { error } = await supabase.from('budget_months').delete().eq('period', period)
       if (error) throw error
     },
@@ -718,5 +728,146 @@ export function useDeleteBudgetItem() {
       if (ctx?.prev) qc.setQueryData(['budget_items'], ctx.prev)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['budget_items'] }),
+  })
+}
+
+// --- cele zakupowe („Inne": co kupić + ile odkładam co miesiąc) ---
+
+export function useBudgetGoals() {
+  return useQuery({
+    queryKey: ['budget_goals'],
+    queryFn: async (): Promise<BudgetGoal[]> => {
+      const { data, error } = await supabase
+        .from('budget_goals')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      return (data ?? []).map((g) => ({
+        ...g,
+        target: g.target == null ? null : Number(g.target),
+        done: !!g.done,
+      })) as BudgetGoal[]
+    },
+  })
+}
+
+export function useBudgetGoalAlloc() {
+  return useQuery({
+    queryKey: ['budget_goal_alloc'],
+    queryFn: async (): Promise<BudgetGoalAlloc[]> => {
+      const { data, error } = await supabase.from('budget_goal_alloc').select('*')
+      if (error) throw error
+      return (data ?? []).map((a) => ({ ...a, amount: Number(a.amount) })) as BudgetGoalAlloc[]
+    },
+  })
+}
+
+export function useAddBudgetGoal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { title: string; target: number | null; icon?: string }) => {
+      const { error } = await supabase
+        .from('budget_goals')
+        .insert({ ...input, title: input.title.trim() })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget_goals'] }),
+  })
+}
+
+export function useUpdateBudgetGoal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (
+      input: { id: string } & Partial<Pick<BudgetGoal, 'title' | 'icon' | 'target' | 'done' | 'sort_order'>>
+    ) => {
+      const { id, ...patch } = input
+      const { error } = await supabase.from('budget_goals').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['budget_goals'] })
+      const prev = qc.getQueryData<BudgetGoal[]>(['budget_goals']) ?? []
+      qc.setQueryData<BudgetGoal[]>(
+        ['budget_goals'],
+        prev.map((g) => (g.id === input.id ? { ...g, ...input } : g))
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['budget_goals'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['budget_goals'] }),
+  })
+}
+
+/** Usuwa cel razem z odkładanymi kwotami (cascade). */
+export function useDeleteBudgetGoal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('budget_goals').delete().eq('id', id)
+      if (error) throw error
+    },
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['budget_goals'] })
+      const prev = qc.getQueryData<BudgetGoal[]>(['budget_goals']) ?? []
+      qc.setQueryData<BudgetGoal[]>(['budget_goals'], prev.filter((g) => g.id !== id))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['budget_goals'], ctx.prev)
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['budget_goals'] })
+      qc.invalidateQueries({ queryKey: ['budget_goal_alloc'] })
+    },
+  })
+}
+
+/** Ile w danym miesiącu na dany cel. 0/null kasuje komórkę. */
+export function useSaveBudgetGoalAlloc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { goal_id: string; period: string; amount: number | null }) => {
+      if (!input.amount) {
+        const { error } = await supabase
+          .from('budget_goal_alloc')
+          .delete()
+          .eq('goal_id', input.goal_id)
+          .eq('period', input.period)
+        if (error) throw error
+        return
+      }
+      const { error } = await supabase
+        .from('budget_goal_alloc')
+        .upsert(input, { onConflict: 'goal_id,period' })
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ['budget_goal_alloc'] })
+      const prev = qc.getQueryData<BudgetGoalAlloc[]>(['budget_goal_alloc']) ?? []
+      const rest = prev.filter((a) => !(a.goal_id === input.goal_id && a.period === input.period))
+      qc.setQueryData<BudgetGoalAlloc[]>(
+        ['budget_goal_alloc'],
+        input.amount
+          ? [
+              ...rest,
+              {
+                id: `tmp-${input.goal_id}-${input.period}`,
+                goal_id: input.goal_id,
+                period: input.period,
+                amount: input.amount,
+              },
+            ]
+          : rest
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['budget_goal_alloc'], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['budget_goal_alloc'] }),
   })
 }
